@@ -1,5 +1,13 @@
 package coding
 
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+
+	"github.com/rclone/rclone/lib/rest"
+)
+
 // https://help.coding.net/openapi
 type (
 	AccessLevel     uint8
@@ -31,14 +39,21 @@ const (
 	ReleaseStrategySnapshot
 )
 
+type Request interface {
+	ActionName() string
+}
+
 type Page struct {
 	PageNumber int `json:",omitempty"`
 	PageSize   int `json:",omitempty"`
 	TotalCount int `json:",omitempty"`
 }
 
+func (CreateArtifactRepositoryRequest) ActionName() string {
+	return "CreateArtifactRepository"
+}
+
 type CreateArtifactRepositoryRequest struct {
-	Action         string
 	ProjectId      uintptr
 	RepositoryName string
 	Type           RepositoryType
@@ -52,8 +67,11 @@ type CreateArtifactRepositoryResponse struct {
 	RequestId string
 }
 
+func (DescribeArtifactRepositoryListRequest) ActionName() string {
+	return "DescribeArtifactRepositoryList"
+}
+
 type DescribeArtifactRepositoryListRequest struct {
-	Action    string
 	ProjectId uintptr
 	Type      RepositoryType `json:",omitempty"`
 	Page
@@ -82,8 +100,11 @@ type ArtifactRepositoryBean struct {
 	CreatedAt       Timestamp
 }
 
+func (DescribeArtifactPackageListRequest) ActionName() string {
+	return "DescribeArtifactPackageList"
+}
+
 type DescribeArtifactPackageListRequest struct {
-	Action        string
 	ProjectId     uintptr
 	Repository    string
 	PackagePrefix string `json:",omitempty"`
@@ -115,8 +136,11 @@ type ArtifactPackageBean struct {
 	ReleaseStrategy            ReleaseStrategy
 }
 
+func (DescribeArtifactVersionListRequest) ActionName() string {
+	return "DescribeArtifactVersionList"
+}
+
 type DescribeArtifactVersionListRequest struct {
-	Action     string
 	ProjectId  uintptr
 	Repository string
 	Package    string
@@ -145,8 +169,11 @@ type ArtifactVersionBean struct {
 	ReleaseStatus ReleaseStatus
 }
 
+func (DescribeArtifactFileDownloadUrlRequest) ActionName() string {
+	return "DescribeArtifactFileDownloadUrl"
+}
+
 type DescribeArtifactFileDownloadUrlRequest struct {
-	Action         string
 	ProjectId      uintptr
 	Repository     string
 	Package        string
@@ -160,8 +187,11 @@ type DescribeArtifactFileDownloadUrlResponse struct {
 	RequestId string
 }
 
+func (DescribeArtifactPropertiesRequest) ActionName() string {
+	return "DescribeArtifactProperties"
+}
+
 type DescribeArtifactPropertiesRequest struct {
-	Action         string
 	ProjectId      uintptr
 	Repository     string
 	Package        string
@@ -186,10 +216,17 @@ type ArtifactPropertyBean struct {
 	Value string
 }
 
+func (CreateArtifactPropertiesRequest) ActionName() string {
+	return "CreateArtifactProperties"
+}
+
 type CreateArtifactPropertiesRequest ModifyArtifactPropertiesRequest
 
+func (ModifyArtifactPropertiesRequest) ActionName() string {
+	return "ModifyArtifactProperties"
+}
+
 type ModifyArtifactPropertiesRequest struct {
-	Action         string
 	ProjectId      uintptr
 	Repository     string
 	Package        string
@@ -197,8 +234,11 @@ type ModifyArtifactPropertiesRequest struct {
 	PropertySet    []ArtifactPropertyBean
 }
 
+func (DeleteArtifactPropertiesRequest) ActionName() string {
+	return "DeleteArtifactProperties"
+}
+
 type DeleteArtifactPropertiesRequest struct {
-	Action          string
 	ProjectId       uintptr
 	Repository      string
 	Package         string
@@ -211,4 +251,24 @@ type DeleteArtifactPropertiesResponse ModifyArtifactPropertiesResponse
 
 type ModifyArtifactPropertiesResponse struct {
 	RequestId string
+}
+
+func call(
+	ctx context.Context,
+	rpc *rest.Client,
+	req Request,
+	resp interface{},
+) (*http.Response, error) {
+	reqBytes, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	reqMap := map[string]interface{}{
+		"Action": req.ActionName(),
+	}
+	if err = json.Unmarshal(reqBytes, &reqMap); err != nil {
+		return nil, err
+	}
+
+	return rpc.CallJSON(ctx, &rest.Opts{Method: http.MethodPost}, req, resp)
 }
