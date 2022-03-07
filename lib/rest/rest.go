@@ -282,6 +282,7 @@ func (api *Client) Call(ctx context.Context, opts *Opts) (resp *http.Response, e
 	}
 	api.mu.RUnlock()
 	resp, err = c.Do(req)
+	// fmt.Printf("\n\nreq: %#v\n\nresp: %#v\n\n", req, resp)
 	api.mu.RLock()
 	if err != nil {
 		return nil, err
