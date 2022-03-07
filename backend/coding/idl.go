@@ -405,9 +405,6 @@ func (f *Fs) call(
 	respWrapper := struct{ Response interface{} }{Response: resp}
 	opts := rest.Opts{
 		Method: http.MethodPost,
-		ExtraHeaders: map[string]string{
-			"Authorization": "token" + f.opt.Token,
-		},
 	}
 	ret, err := f.srvRest.CallJSON(ctx, &opts, &reqMap, &respWrapper)
 	if err != nil {
