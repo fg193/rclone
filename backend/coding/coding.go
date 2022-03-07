@@ -356,12 +356,12 @@ func (f *Fs) Root() string {
 // String converts this Fs to a string
 func (f *Fs) String() string {
 	if f.rootBucket == "" {
-		return fmt.Sprintf("S3 root")
+		return fmt.Sprintf("Coding [/]")
 	}
 	if f.rootDirectory == "" {
-		return fmt.Sprintf("S3 bucket %s", f.rootBucket)
+		return fmt.Sprintf("Coding [%s]", f.rootBucket)
 	}
-	return fmt.Sprintf("S3 bucket %s path %s", f.rootBucket, f.rootDirectory)
+	return fmt.Sprintf("Coding [%s] %s", f.rootBucket, f.rootDirectory)
 }
 
 // Features returns the optional features of this Fs

@@ -412,16 +412,14 @@ func (f *Fs) call(
 	}
 	// fmt.Printf("\n\nreq: %+v\n\nresp: %#v\n\n", reqMap, resp)
 
-	errorCode := reflect.
-		ValueOf(respWrapper.Response).
+	baseResp, _ := reflect.ValueOf(respWrapper.Response).
 		Elem().
 		FieldByName("BaseResponse").
-		FieldByName("Error").
-		FieldByName("Code").
-		String()
+		Interface().(BaseResponse)
 
-	if len(errorCode) > 0 {
-		return ret, fmt.Errorf("%s: %s", req.ActionName(), errorCode)
+	if len(baseResp.Error.Code) > 0 {
+		return ret, fmt.Errorf("%s[%s]: %s",
+			req.ActionName(), baseResp.Error.Code, baseResp.Error.Message)
 	}
 	return ret, err
 }
