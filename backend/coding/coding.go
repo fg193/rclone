@@ -43,8 +43,25 @@ func init() {
 			Name: "token",
 			Help: `Coding personal token.
 
-Generate or manage these hexadecimal secrets at
-https://{team}.coding.net/user/account/setting/tokens.`,
+The token format should be 40 hexadecimal digits.
+Only the "project:artifacts" permission scope is needed for rclone.
+
+Generate new or manage existing personal tokens at
+https://{team-name}.coding.net/user/account/setting/tokens.`,
+		}, {
+			Name: "team_name",
+			Help: `Coding team identifier.
+
+The team name is used as the second-level domain name in Coding.
+If not specified, the rclone session will be read-only.`,
+		}, {
+			Name: "project_name",
+			Help: `Coding project identifier.
+
+
+The project name present in the URL path of the project summary page,
+like "https://{team-name}.coding.net/p/{project-name}".
+If not specified, rclone will choose the first available project in the team.`,
 		}, {
 			Name: "upload_cutoff",
 			Help: `Cutoff for switching to chunked upload.
@@ -104,20 +121,6 @@ If you are uploading small numbers of large files over high-speed links
 and these uploads do not fully utilize your bandwidth, then increasing
 this may help to speed up the transfers.`,
 			Default:  4,
-			Advanced: true,
-		}, {
-			Name: "force_path_style",
-			Help: `If true use path style access if false use virtual hosted style.
-
-If this is true (the default) then rclone will use path style access,
-if false then rclone will use virtual path style. See [the AWS S3
-docs](https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingBucket.html#access-bucket-intro)
-for more info.
-
-Some providers (e.g. AWS, Aliyun OSS, Netease COS, or Tencent COS) require this set to
-false - rclone will do this automatically based on the provider
-setting.`,
-			Default:  true,
 			Advanced: true,
 		}, {
 			Name:     "leave_parts_on_error",
@@ -238,27 +241,8 @@ This option controls how often unused buffers will be removed from the pool.`,
 			Default:  memoryPoolUseMmap,
 			Advanced: true,
 			Help:     `Whether to use mmap buffers in internal memory pool.`,
-		}, {
-			Name:     "disable_http2",
-			Default:  false,
-			Advanced: true,
-			Help: `Disable usage of http2 for S3 backends.
-
-There is currently an unsolved issue with the s3 (specifically minio) backend
-and HTTP/2.  HTTP/2 is enabled by default for the s3 backend but can be
-disabled here.  When the issue is solved this flag will be removed.
-
-See: https://github.com/rclone/rclone/issues/4673, https://github.com/rclone/rclone/issues/3631
-
-`,
-		}, {
-			Name: "download_url",
-			Help: `Custom endpoint for downloads.
-This is usually set to a CloudFront CDN URL as AWS S3 offers
-cheaper egress for data downloaded through the CloudFront network.`,
-			Advanced: true,
-		},
-		}})
+		}},
+	})
 }
 
 const (
@@ -279,11 +263,12 @@ const (
 // Options defines the configuration for this backend
 type Options struct {
 	Token                 string               `config:"token"`
+	TeamName              string               `config:"team_name"`
+	ProjectName           string               `config:"project_name"`
 	UploadCutoff          fs.SizeSuffix        `config:"upload_cutoff"`
 	ChunkSize             fs.SizeSuffix        `config:"chunk_size"`
 	MaxUploadParts        int64                `config:"max_upload_parts"`
 	UploadConcurrency     int                  `config:"upload_concurrency"`
-	ForcePathStyle        bool                 `config:"force_path_style"`
 	AccelerateEndpoint___ bool                 `config:"use_accelerate_endpoint"`
 	LeavePartsOnError     bool                 `config:"leave_parts_on_error"`
 	ListChunk             int                  `config:"list_chunk"`
@@ -294,7 +279,6 @@ type Options struct {
 	Enc                   encoder.MultiEncoder `config:"encoding"`
 	MemoryPoolFlushTime   fs.Duration          `config:"memory_pool_flush_time"`
 	MemoryPoolUseMmap     bool                 `config:"memory_pool_use_mmap"`
-	DownloadURL           string               `config:"download_url"`
 }
 
 // Fs represents a remote s3 server
@@ -442,7 +426,9 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 			opt.MemoryPoolUseMmap,
 		),
 	}
-	f.srvRest.SetRoot("https://e.coding.net/open-api")
+	if len(f.opt.TeamName) != 0 {
+		f.srvRest.SetRoot(fmt.Sprintf("https://%s-generic.pkg.coding.net", f.opt.TeamName))
+	}
 	f.srvRest.SetHeader("Authorization", "token "+opt.Token)
 	f.setRoot(root)
 	f.features = (&fs.Features{
@@ -455,13 +441,15 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	// Find the first project in the team
 	req := DescribeCodingProjectsRequest{
 		Page: Page{PageNumber: 1, PageSize: f.opt.ListChunk},
+
+		ProjectName: f.opt.ProjectName,
 	}
 	resp := DescribeCodingProjectsResponse{}
 	if _, err = f.call(ctx, &req, &resp); err != nil {
 		return nil, err
 	}
 	if len(resp.Data.ProjectList) == 0 {
-		return nil, fmt.Errorf("cannot find project")
+		return nil, fmt.Errorf("cannot find project %s", f.opt.ProjectName)
 	}
 	f.project = resp.Data.ProjectList[0].Id
 
@@ -1145,20 +1133,7 @@ func (o *Object) Storable() bool {
 	return true
 }
 
-func (o *Object) downloadFromURL(ctx context.Context, url string, options ...fs.OpenOption) (in io.ReadCloser, err error) {
-	var resp *http.Response
-	opts := rest.Opts{
-		Method:  "GET",
-		RootURL: url,
-		Options: options,
-	}
-	if err = o.fs.pacer.Call(func() (bool, error) {
-		resp, err = o.fs.srvRest.Call(ctx, &opts)
-		return o.fs.shouldRetry(ctx, resp, err)
-	}); err != nil {
-		return nil, err
-	}
-
+func (o *Object) download(ctx context.Context, resp *http.Response) (in io.ReadCloser, err error) {
 	contentLength := &resp.ContentLength
 	if resp.Header.Get("Content-Range") != "" {
 		var contentRange = resp.Header.Get("Content-Range")
@@ -1187,12 +1162,16 @@ func (o *Object) downloadFromURL(ctx context.Context, url string, options ...fs.
 
 // Open an object for read
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.ReadCloser, err error) {
-	bucket, bucketPath := o.split()
-
-	if len(o.fs.opt.DownloadURL) > 0 {
-		return o.downloadFromURL(ctx, o.fs.opt.DownloadURL+bucketPath, options...)
+	var status *http.Response
+	if len(o.fs.opt.TeamName) != 0 {
+		req := DownloadArtifactVersionRequest{}
+		if status, err = o.fs.callRestRetry(ctx, o.remote, req, nil); err != nil {
+			return
+		}
+		return o.download(ctx, status)
 	}
 
+	bucket, bucketPath := o.split()
 	req := DescribeArtifactFileDownloadUrlRequest{
 		ProjectId:      o.fs.project,
 		Repository:     bucket,
@@ -1203,7 +1182,19 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 	if _, err = o.fs.call(ctx, &req, &resp); err != nil {
 		return nil, err
 	}
-	return o.downloadFromURL(ctx, resp.Url, options...)
+
+	opts := rest.Opts{
+		Method:  http.MethodGet,
+		RootURL: resp.Url,
+		Options: options,
+	}
+	if err = o.fs.pacer.Call(func() (bool, error) {
+		status, err = o.fs.srvRest.Call(ctx, &opts)
+		return o.fs.shouldRetry(ctx, status, err)
+	}); err != nil {
+		return nil, err
+	}
+	return o.download(ctx, status)
 }
 
 var warnStreamUpload sync.Once
@@ -1320,8 +1311,7 @@ func (o *Object) uploadMultipart(ctx context.Context, size int64, in io.Reader) 
 				PartNumber: partNum,
 				ChunkSize:  int64(len(buf)),
 			}
-			uploadPartResp := map[string]interface{}{}
-			if _, err = o.fs.callRestRetry(ctx, o.remote, &uploadPartReq, &uploadPartResp); err != nil {
+			if _, err = o.fs.callRestRetry(ctx, o.remote, &uploadPartReq, nil); err != nil {
 				return fmt.Errorf("multipart upload failed to upload part: %w", err)
 			}
 			return nil
@@ -1348,6 +1338,10 @@ func (o *Object) uploadMultipart(ctx context.Context, size int64, in io.Reader) 
 
 // Update the Object from in with modTime and size
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
+	if len(o.fs.opt.TeamName) == 0 {
+		return fmt.Errorf("the team name is unknown, read only file system")
+	}
+
 	bucket, _ := o.split()
 	err := o.fs.makeBucket(ctx, bucket)
 	if err != nil {
