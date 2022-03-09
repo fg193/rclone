@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/rclone/rclone/fs/fserrors"
 	"github.com/rclone/rclone/lib/rest"
 )
 
@@ -371,6 +372,12 @@ type MergeArtifactVersionChunksRequest struct {
 	FileSize int64  `json:"size,string"`
 }
 
+func (DownloadArtifactVersionRequest) MethodName() string {
+	return http.MethodGet
+}
+
+type DownloadArtifactVersionRequest DeleteArtifactVersionRequest
+
 func (UploadArtifactVersionRequest) MethodName() string {
 	return http.MethodPut
 }
@@ -459,4 +466,52 @@ func jsonUnmarshalUseNumber(blob []byte, ret interface{}) error {
 	decoder := json.NewDecoder(bytes.NewBuffer(blob))
 	decoder.UseNumber()
 	return decoder.Decode(&ret)
+}
+
+var retryStatusCodes = []int{
+	http.StatusTooManyRequests,
+	http.StatusInternalServerError,
+	http.StatusBadGateway,
+	http.StatusServiceUnavailable,
+	http.StatusGatewayTimeout,
+}
+
+func (f *Fs) shouldRetry(ctx context.Context, status *http.Response, err error) (bool, error) {
+	if err == nil {
+		return false, nil
+	}
+	if fserrors.ContextError(ctx, &err) {
+		return false, err
+	}
+	if fserrors.ShouldRetry(err) || fserrors.ShouldRetryHTTP(status, retryStatusCodes) {
+		return true, err
+	}
+	return false, err
+}
+
+func (f *Fs) callRetry(
+	ctx context.Context,
+	req ActionRequest,
+	resp interface{},
+) (status *http.Response, finalErr error) {
+	finalErr = f.pacer.CallNoRetry(func() (bool, error) {
+		var err error
+		status, err = f.call(ctx, req, resp)
+		return f.shouldRetry(ctx, status, err)
+	})
+	return
+}
+
+func (f *Fs) callRestRetry(
+	ctx context.Context,
+	path string,
+	req MethodRequest,
+	resp interface{},
+) (status *http.Response, finalErr error) {
+	finalErr = f.pacer.CallNoRetry(func() (bool, error) {
+		var err error
+		status, err = f.callRest(ctx, path, req, resp)
+		return f.shouldRetry(ctx, status, err)
+	})
+	return
 }
