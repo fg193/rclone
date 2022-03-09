@@ -411,7 +411,8 @@ func (f *Fs) call(
 
 	respWrapper := struct{ Response interface{} }{Response: resp}
 	opts := rest.Opts{
-		Method: http.MethodPost,
+		Method:  http.MethodPost,
+		RootURL: "https://e.coding.net/open-api",
 	}
 	ret, err := f.srvRest.CallJSON(ctx, &opts, &reqMap, &respWrapper)
 	if err != nil {
