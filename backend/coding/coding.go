@@ -15,12 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/configstruct"
-	"github.com/rclone/rclone/fs/fserrors"
 	"github.com/rclone/rclone/fs/fshttp"
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/fs/walk"
@@ -358,47 +356,6 @@ func (f *Fs) Features() *fs.Features {
 	return f.features
 }
 
-// retryErrorCodes is a slice of error codes that we will retry
-// See: https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
-var retryErrorCodes = []int{
-	429, // Too Many Requests
-	500, // Internal Server Error - "We encountered an internal error. Please try again."
-	503, // Service Unavailable/Slow Down - "Reduce your request rate"
-}
-
-//S3 is pretty resilient, and the built in retry handling is probably sufficient
-// as it should notice closed connections and timeouts which are the most likely
-// sort of failure modes
-func (f *Fs) shouldRetry(ctx context.Context, err error) (bool, error) {
-	if fserrors.ContextError(ctx, &err) {
-		return false, err
-	}
-	// If this is an awserr object, try and extract more useful information to determine if we should retry
-	if awsError, ok := err.(awserr.Error); ok {
-		// Simple case, check the original embedded error in case it's generically retryable
-		if fserrors.ShouldRetry(awsError.OrigErr()) {
-			return true, err
-		}
-		// Failing that, if it's a RequestFailure it's probably got an http status code we can check
-		if reqErr, ok := err.(awserr.RequestFailure); ok {
-			// 301 if wrong region for bucket - can only update if running from a bucket
-			for _, e := range retryErrorCodes {
-				if reqErr.StatusCode() == e {
-					return true, err
-				}
-			}
-		}
-	}
-	// Ok, not an awserr, check for generic failure conditions
-	return fserrors.ShouldRetry(err), err
-}
-
-// parsePath parses a remote 'url'
-func parsePath(path string) (root string) {
-	root = strings.Trim(path, "/")
-	return
-}
-
 // split returns bucket and bucketPath from the rootRelativePath
 // relative to f.root
 func (f *Fs) split(rootRelativePath string) (bucketName, bucketPath string) {
@@ -443,7 +400,7 @@ func (f *Fs) setUploadCutoff(cs fs.SizeSuffix) (old fs.SizeSuffix, err error) {
 
 // setRoot changes the root of the Fs
 func (f *Fs) setRoot(root string) {
-	f.root = parsePath(root)
+	f.root = strings.Trim(root, "/")
 	f.rootBucket, f.rootDirectory = bucket.Split(f.root)
 }
 
@@ -584,10 +541,7 @@ func (f *Fs) list(ctx context.Context, bucket, directory, prefix string, addBuck
 			Page:          Page{PageNumber: page, PageSize: f.opt.ListChunk},
 		}
 		resp := DescribeArtifactPackageListResponse{}
-		if err := f.pacer.Call(func() (bool, error) {
-			_, err := f.call(ctx, &req, &resp)
-			return f.shouldRetry(ctx, err)
-		}); err != nil {
+		if _, err := f.callRetry(ctx, &req, &resp); err != nil {
 			return err
 		}
 
@@ -686,12 +640,7 @@ func (f *Fs) listBuckets(ctx context.Context) (entries fs.DirEntries, err error)
 		Page:      Page{PageNumber: 1, PageSize: f.opt.ListChunk},
 	}
 	resp := DescribeArtifactRepositoryListResponse{}
-	err = f.pacer.Call(func() (bool, error) {
-		var err error
-		_, err = f.call(ctx, &req, &resp)
-		return f.shouldRetry(ctx, err)
-	})
-	if err != nil {
+	if _, err = f.callRetry(ctx, &req, &resp); err != nil {
 		return nil, err
 	}
 	for _, bucket := range resp.Data.InstanceSet {
@@ -800,11 +749,7 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 func (f *Fs) bucketExists(ctx context.Context, bucket string) (bool, error) {
 	req := DescribeArtifactRepositoryListRequest{}
 	resp := DescribeArtifactRepositoryListResponse{}
-	err := f.pacer.Call(func() (bool, error) {
-		_, err := f.call(ctx, &req, &resp)
-		return f.shouldRetry(ctx, err)
-	})
-	if err != nil {
+	if _, err := f.call(ctx, &req, &resp); err != nil {
 		return false, err
 	}
 	for _, repo := range resp.Data.InstanceSet {
@@ -833,10 +778,7 @@ func (f *Fs) makeBucket(ctx context.Context, bucket string) error {
 			Type:           RepositoryTypeGeneric,
 		}
 		resp := CreateArtifactRepositoryResponse{}
-		err := f.pacer.Call(func() (bool, error) {
-			_, err := f.call(ctx, &req, &resp)
-			return f.shouldRetry(ctx, err)
-		})
+		_, err := f.call(ctx, &req, &resp)
 		if err == nil {
 			fs.Infof(f, "Bucket %q created", bucket)
 		}
@@ -1085,11 +1027,7 @@ func (o *Object) readProperties(ctx context.Context) error {
 		PackageVersion: LatestVersion,
 	}
 	resp := DescribeArtifactPropertiesResponse{}
-	if err := o.fs.pacer.Call(func() (bool, error) {
-		var err error
-		_, err = o.fs.call(ctx, &req, &resp)
-		return o.fs.shouldRetry(ctx, err)
-	}); err != nil {
+	if _, err := o.fs.callRetry(ctx, &req, &resp); err != nil {
 		return err
 	}
 
@@ -1114,11 +1052,7 @@ func (o *Object) setProperties(ctx context.Context, properties map[string]string
 			ArtifactPropertyBean{Name: k, Value: v})
 	}
 	resp := DescribeArtifactPropertiesResponse{}
-	if err := o.fs.pacer.Call(func() (bool, error) {
-		var err error
-		_, err = o.fs.call(ctx, &req, &resp)
-		return o.fs.shouldRetry(ctx, err)
-	}); err != nil {
+	if _, err := o.fs.call(ctx, &req, &resp); err != nil {
 		return err
 	}
 	o.properties = properties
@@ -1140,11 +1074,7 @@ func (o *Object) readMetaData(ctx context.Context) error {
 		Package:    bucketPath,
 	}
 	resp := DescribeArtifactVersionListResponse{}
-	if err := o.fs.pacer.Call(func() (bool, error) {
-		var err error
-		_, err = o.fs.call(ctx, &req, &resp)
-		return o.fs.shouldRetry(ctx, err)
-	}); err != nil {
+	if _, err := o.fs.call(ctx, &req, &resp); err != nil {
 		return err
 	}
 	// TODO
@@ -1222,11 +1152,10 @@ func (o *Object) downloadFromURL(ctx context.Context, url string, options ...fs.
 		RootURL: url,
 		Options: options,
 	}
-	err = o.fs.pacer.Call(func() (bool, error) {
+	if err = o.fs.pacer.Call(func() (bool, error) {
 		resp, err = o.fs.srvRest.Call(ctx, &opts)
-		return o.fs.shouldRetry(ctx, err)
-	})
-	if err != nil {
+		return o.fs.shouldRetry(ctx, resp, err)
+	}); err != nil {
 		return nil, err
 	}
 
@@ -1328,12 +1257,7 @@ func (o *Object) uploadMultipart(ctx context.Context, size int64, in io.Reader) 
 		FileSize: o.bytes,
 	}
 	resp := GetArtifactVersionExistChunksResponse{}
-	err = f.pacer.Call(func() (bool, error) {
-		var err error
-		_, err = o.fs.callRest(ctx, o.remote, &req, &resp)
-		return f.shouldRetry(ctx, err)
-	})
-	if err != nil {
+	if _, err = f.callRestRetry(ctx, o.remote, req, resp); err != nil {
 		return fmt.Errorf("multipart upload failed to initialise: %w", err)
 	}
 	defer atexit.OnError(&err, func() {
@@ -1341,13 +1265,8 @@ func (o *Object) uploadMultipart(ctx context.Context, size int64, in io.Reader) 
 			return
 		}
 		fs.Debugf(o, "Cancelling multipart upload")
-		errCancel := f.pacer.Call(func() (bool, error) {
-			// _, err := f.c.AbortMultipartUploadWithContext(context.Background(), &s3.AbortMultipartUploadInput{})
-			return f.shouldRetry(ctx, err)
-		})
-		if errCancel != nil {
-			fs.Debugf(o, "Failed to cancel multipart upload: %v", errCancel)
-		}
+		// _, errCancel := f.c.AbortMultipartUploadWithContext(context.Background(), &s3.AbortMultipartUploadInput{})
+		// fs.Debugf(o, "Failed to cancel multipart upload: %v", errCancel)
 	})()
 
 	var (
@@ -1395,25 +1314,14 @@ func (o *Object) uploadMultipart(ctx context.Context, size int64, in io.Reader) 
 		g.Go(func() (err error) {
 			defer free()
 
-			err = f.pacer.Call(func() (bool, error) {
-				uploadPartReq := UploadArtifactVersionChunkRequest{
-					Version:    LatestVersion,
-					UploadId:   resp.Data.UploadId,
-					PartNumber: partNum,
-					ChunkSize:  int64(len(buf)),
-				}
-				uploadPartResp := map[string]interface{}{}
-				_, err = o.fs.callRest(ctx, o.remote, &uploadPartReq, &uploadPartResp)
-				if err != nil {
-					if partNum <= concurrency {
-						return f.shouldRetry(ctx, err)
-					}
-					// retry all chunks once have done the first batch
-					return true, err
-				}
-				return false, nil
-			})
-			if err != nil {
+			uploadPartReq := UploadArtifactVersionChunkRequest{
+				Version:    LatestVersion,
+				UploadId:   resp.Data.UploadId,
+				PartNumber: partNum,
+				ChunkSize:  int64(len(buf)),
+			}
+			uploadPartResp := map[string]interface{}{}
+			if _, err = o.fs.callRestRetry(ctx, o.remote, &uploadPartReq, &uploadPartResp); err != nil {
 				return fmt.Errorf("multipart upload failed to upload part: %w", err)
 			}
 			return nil
@@ -1425,18 +1333,14 @@ func (o *Object) uploadMultipart(ctx context.Context, size int64, in io.Reader) 
 		return err
 	}
 
-	err = f.pacer.Call(func() (bool, error) {
-		req := MergeArtifactVersionChunksRequest{
-			Version:  LatestVersion,
-			UploadId: resp.Data.UploadId,
-			FileTag:  o.md5,
-			FileSize: o.Size(),
-		}
-		resp := map[string]interface{}{}
-		_, err := o.fs.callRest(ctx, o.remote, &req, &resp)
-		return f.shouldRetry(ctx, err)
-	})
-	if err != nil {
+	mergeReq := MergeArtifactVersionChunksRequest{
+		Version:  LatestVersion,
+		UploadId: resp.Data.UploadId,
+		FileTag:  o.md5,
+		FileSize: o.Size(),
+	}
+	mergeResp := map[string]interface{}{}
+	if _, err = o.fs.callRestRetry(ctx, o.remote, &mergeReq, &mergeResp); err != nil {
 		return fmt.Errorf("multipart upload failed to finalise: %w", err)
 	}
 	return nil
@@ -1470,15 +1374,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 			in = nil
 		}
 		// httpReq.ContentLength = size
-		err = o.fs.pacer.CallNoRetry(func() (bool, error) {
-			var err error
-			_, err = o.fs.callRest(ctx, o.remote, &UploadArtifactVersionRequest{}, nil)
-			if err != nil {
-				return o.fs.shouldRetry(ctx, err)
-			}
-			return fserrors.ShouldRetryHTTP(resp, retryErrorCodes), err
-		})
-		if err != nil {
+		if resp, err = o.fs.callRestRetry(ctx, o.remote, &UploadArtifactVersionRequest{}, nil); err != nil {
 			return err
 		}
 	}
@@ -1509,11 +1405,8 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 
 // Remove an object
 func (o *Object) Remove(ctx context.Context) error {
-	return o.fs.pacer.Call(func() (bool, error) {
-		_, err := o.fs.callRest(
-			ctx, o.remote, &DeleteArtifactVersionRequest{}, nil)
-		return o.fs.shouldRetry(ctx, err)
-	})
+	_, err := o.fs.callRestRetry(ctx, o.remote, &DeleteArtifactVersionRequest{}, nil)
+	return err
 }
 
 // Check the interfaces are satisfied
