@@ -585,28 +585,9 @@ func (f *Fs) list(ctx context.Context, bucket, directory, prefix string, addBuck
 	if directory != "" {
 		directory += "/"
 	}
-	delimiter := ""
-	if !recurse {
-		delimiter = "/"
-	}
-	_ = delimiter
-	// URL encode the listings so we can use control characters in object names
-	// See: https://github.com/aws/aws-sdk-go/issues/1914
-	//
-	// However this doesn't work perfectly under Ceph (and hence DigitalOcean/Dreamhost) because
-	// it doesn't encode CommonPrefixes.
-	// See: https://tracker.ceph.com/issues/41870
-	//
-	// This does not work under IBM COS also: See https://github.com/rclone/rclone/issues/3345
-	// though maybe it does on some versions.
-	//
-	// This does work with minio but was only added relatively recently
-	// https://github.com/minio/minio/pull/7265
-	//
-	// So we enable only on providers we know supports it properly, all others can retry when a
-	// XML Syntax error is detected.
+
+	commonPrefixes := make(map[string]struct{})
 	for page := 1; ; page++ {
-		// FIXME need to implement ALL loop
 		req := DescribeArtifactPackageListRequest{
 			ProjectId:     f.project,
 			Repository:    bucket,
@@ -620,26 +601,6 @@ func (f *Fs) list(ctx context.Context, bucket, directory, prefix string, addBuck
 		}); err != nil {
 			return err
 		}
-		if !recurse {
-			var commonPrefixes []string
-			for _, remote := range commonPrefixes {
-				remote = f.opt.Enc.ToStandardPath(remote)
-				if !strings.HasPrefix(remote, prefix) {
-					fs.Logf(f, "Odd name received %q", remote)
-					continue
-				}
-				remote = remote[len(prefix):]
-				if addBucket {
-					remote = path.Join(bucket, remote)
-				}
-				if strings.HasSuffix(remote, "/") {
-					remote = remote[:len(remote)-1]
-				}
-				if err := fn(remote, &ArtifactPackageBean{Name: remote}, true); err != nil {
-					return err
-				}
-			}
-		}
 
 		for _, object := range resp.Data.InstanceSet {
 			remote := f.opt.Enc.ToStandardPath(object.Name)
@@ -649,12 +610,22 @@ func (f *Fs) list(ctx context.Context, bucket, directory, prefix string, addBuck
 			}
 			remote = remote[len(prefix):]
 			isDirectory := remote == "" || strings.HasSuffix(remote, "/")
-			if addBucket {
-				remote = path.Join(bucket, remote)
-			}
 			// is this a directory marker?
 			if isDirectory { // && object.Size != nil && *object.Size == 0
 				continue // skip directory marker
+			}
+
+			// if not recurse, search for commmon prefixes
+			if !recurse {
+				offset := strings.IndexByte(remote[len(directory):], '/')
+				if offset >= 0 {
+					commonPrefixes[remote[:len(directory)+offset]] = struct{}{}
+					continue
+				}
+			}
+
+			if addBucket {
+				remote = path.Join(bucket, remote)
 			}
 			if err := fn(remote, &object, false); err != nil {
 				return err
@@ -662,9 +633,22 @@ func (f *Fs) list(ctx context.Context, bucket, directory, prefix string, addBuck
 		}
 
 		if len(resp.Data.InstanceSet) < f.opt.ListChunk {
-			return nil
+			break
 		}
 	}
+
+	if recurse {
+		return nil
+	}
+	for remote := range commonPrefixes {
+		if addBucket {
+			remote = path.Join(bucket, remote)
+		}
+		if err := fn(remote, &ArtifactPackageBean{Name: remote}, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Convert a list item into a DirEntry
