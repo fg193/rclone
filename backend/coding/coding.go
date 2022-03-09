@@ -4,7 +4,6 @@ package coding
 import (
 	"context"
 	"crypto/md5"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -95,16 +94,6 @@ Rclone will automatically increase the chunk size when uploading a
 large file of a known size to stay below this number of chunks limit.
 `,
 			Default:  maxUploadParts,
-			Advanced: true,
-		}, {
-			Name: "disable_checksum",
-			Help: `Don't store MD5 checksum with object metadata.
-
-Normally rclone will calculate the MD5 checksum of the input before
-uploading it so it can add it to metadata on the object. This is great
-for data integrity checking but can cause long delays for large files
-to start uploading.`,
-			Default:  false,
 			Advanced: true,
 		}, {
 			Name: "upload_concurrency",
@@ -295,7 +284,6 @@ type Options struct {
 	UploadCutoff          fs.SizeSuffix        `config:"upload_cutoff"`
 	ChunkSize             fs.SizeSuffix        `config:"chunk_size"`
 	MaxUploadParts        int64                `config:"max_upload_parts"`
-	DisableChecksum       bool                 `config:"disable_checksum"`
 	UploadConcurrency     int                  `config:"upload_concurrency"`
 	ForcePathStyle        bool                 `config:"force_path_style"`
 	AccelerateEndpoint___ bool                 `config:"use_accelerate_endpoint"`
@@ -333,12 +321,13 @@ type Object struct {
 	//
 	// List will read everything but meta & mimeType - to fill
 	// that in you need to call readMetaData
-	fs           *Fs                // what this object is part of
-	remote       string             // The remote path
-	md5          string             // md5sum of the object
-	bytes        int64              // size of the object
-	lastModified time.Time          // Last modified
-	properties   map[string]*string // The object metadata if known - may be nil
+	fs           *Fs       // what this object is part of
+	remote       string    // the remote path
+	md5          string    // md5sum of the object
+	bytes        int64     // size of the object
+	lastModified time.Time // last modified
+
+	properties map[string]string // may be nil
 }
 
 // ------------------------------------------------------------
@@ -1082,13 +1071,68 @@ func (o *Object) Size() int64 {
 	return o.bytes
 }
 
+// readProperties gets the properties if it hasn't already been fetched
+func (o *Object) readProperties(ctx context.Context) error {
+	if o.properties != nil {
+		return nil
+	}
+
+	bucket, bucketPath := o.split()
+	req := DescribeArtifactPropertiesRequest{
+		ProjectId:      o.fs.project,
+		Repository:     bucket,
+		Package:        bucketPath,
+		PackageVersion: LatestVersion,
+	}
+	resp := DescribeArtifactPropertiesResponse{}
+	if err := o.fs.pacer.Call(func() (bool, error) {
+		var err error
+		_, err = o.fs.call(ctx, &req, &resp)
+		return o.fs.shouldRetry(ctx, err)
+	}); err != nil {
+		return err
+	}
+
+	o.properties = make(map[string]string, len(resp.InstanceSet))
+	for _, pair := range resp.InstanceSet {
+		o.properties[pair.Name] = pair.Value
+	}
+	return nil
+}
+
+func (o *Object) setProperties(ctx context.Context, properties map[string]string) error {
+	bucket, bucketPath := o.split()
+	req := ModifyArtifactPropertiesRequest{
+		ProjectId:      o.fs.project,
+		Repository:     bucket,
+		Package:        bucketPath,
+		PackageVersion: LatestVersion,
+		PropertySet:    make([]ArtifactPropertyBean, 0, len(properties)),
+	}
+	for k, v := range properties {
+		req.PropertySet = append(req.PropertySet,
+			ArtifactPropertyBean{Name: k, Value: v})
+	}
+	resp := DescribeArtifactPropertiesResponse{}
+	if err := o.fs.pacer.Call(func() (bool, error) {
+		var err error
+		_, err = o.fs.call(ctx, &req, &resp)
+		return o.fs.shouldRetry(ctx, err)
+	}); err != nil {
+		return err
+	}
+	o.properties = properties
+	return nil
+}
+
 // readMetaData gets the metadata if it hasn't already been fetched
 //
 // it also sets the info
 func (o *Object) readMetaData(ctx context.Context) error {
-	if o.properties != nil {
+	if len(o.md5) != 0 {
 		return nil
 	}
+
 	bucket, bucketPath := o.split()
 	req := DescribeArtifactVersionListRequest{
 		ProjectId:  o.fs.project,
@@ -1115,32 +1159,17 @@ func (o *Object) readMetaData(ctx context.Context) error {
 	}
 	sizeInBytes := int64(head.Size * (1 << 20))
 	lastModified := head.CreatedAt.Into()
-	o.setMetaData(md5sum, &sizeInBytes, &lastModified, nil)
+	o.setMetaData(md5sum, &sizeInBytes, &lastModified)
 	return nil
 }
 
-func (o *Object) setMetaData(etag string, contentLength *int64, lastModified *time.Time, meta map[string]*string) {
+func (o *Object) setMetaData(etag string, contentLength *int64, lastModified *time.Time) {
 	// Ignore missing Content-Length assuming it is 0
 	// Some versions of ceph do this due their apache proxies
 	if contentLength != nil {
 		o.bytes = *contentLength
 	}
 	o.setMD5FromEtag(etag)
-	o.properties = meta
-	if o.properties == nil {
-		o.properties = map[string]*string{}
-	}
-	// Read MD5 from metadata if present
-	if md5sumBase64, ok := o.properties[metaMD5Hash]; ok {
-		md5sumBytes, err := base64.StdEncoding.DecodeString(*md5sumBase64)
-		if err != nil {
-			fs.Debugf(o, "Failed to read md5sum from metadata %q: %v", *md5sumBase64, err)
-		} else if len(md5sumBytes) != 16 {
-			fs.Debugf(o, "Failed to read md5sum from metadata %q: wrong length", *md5sumBase64)
-		} else {
-			o.md5 = hex.EncodeToString(md5sumBytes)
-		}
-	}
 	if lastModified == nil {
 		o.lastModified = time.Now()
 		fs.Logf(o, "Failed to read last modified")
@@ -1163,12 +1192,12 @@ func (o *Object) ModTime(ctx context.Context) time.Time {
 		return time.Now()
 	}
 	// read mtime out of metadata if available
-	d, ok := o.properties[metaMTime]
-	if !ok || d == nil {
+	modTimeStr := o.properties[metaMTime]
+	if len(modTimeStr) == 0 {
 		// fs.Debugf(o, "No metadata")
 		return o.lastModified
 	}
-	modTime, err := strconv.ParseInt(*d, 10, 64)
+	modTime, err := strconv.ParseInt(modTimeStr, 10, 64)
 	if err != nil {
 		fs.Logf(o, "Failed to read mtime from object: %v", err)
 		return o.lastModified
@@ -1222,17 +1251,8 @@ func (o *Object) downloadFromURL(ctx context.Context, url string, options ...fs.
 		fs.Debugf(o, "Failed to parse last modified from string %s, %v", resp.Header.Get("Last-Modified"), err)
 	}
 
-	metaData := make(map[string]*string)
-	for key, value := range resp.Header {
-		if strings.HasPrefix(key, "x-amz-meta") {
-			metaKey := strings.TrimPrefix(key, "x-amz-meta-")
-			metaData[strings.Title(metaKey)] = &value[0]
-		}
-	}
-
 	etag := resp.Header.Get("Etag")
-
-	o.setMetaData(etag, contentLength, &lastModified, metaData)
+	o.setMetaData(etag, contentLength, &lastModified)
 	return resp.Body, err
 }
 
@@ -1429,40 +1449,13 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	if err != nil {
 		return err
 	}
-	modTime := src.ModTime(ctx)
-	size := src.Size()
 
+	size := src.Size()
 	multipart := size < 0 || size >= int64(o.fs.opt.UploadCutoff)
 
 	// Set the mtime in the meta data
-	metadata := map[string]string{
-		metaMTime: strconv.FormatInt(modTime.Unix(), 10),
-	}
-
-	// read the md5sum if available
-	// - for non multipart
-	//    - so we can add a ContentMD5
-	//    - so we can add the md5sum in the metadata as metaMD5Hash if using SSE/SSE-C
-	// - for multipart provided checksums aren't disabled
-	//    - so we can add the md5sum in the metadata as metaMD5Hash
-	var md5sumBase64 string
-	var md5sumHex string
-	if !multipart || !o.fs.opt.DisableChecksum {
-		md5sumHex, err = src.Hash(ctx, hash.MD5)
-		if err == nil && matchMd5.MatchString(md5sumHex) {
-			hashBytes, err := hex.DecodeString(md5sumHex)
-			if err == nil {
-				md5sumBase64 = base64.StdEncoding.EncodeToString(hashBytes)
-				if multipart && !o.fs.opt.DisableChecksum {
-					// Set the md5sum as metadata on the object if
-					// - a multipart upload
-					// - the Etag is not an MD5, eg when using SSE/SSE-C
-					// provided checksums aren't disabled
-					metadata[metaMD5Hash] = md5sumBase64
-				}
-			}
-		}
-	}
+	// metaMTime: strconv.FormatInt(src.ModTime(ctx).Unix(), 10),
+	// md5sumHex, err = src.Hash(ctx, hash.MD5)
 
 	var resp *http.Response // response from PUT
 	if multipart {
@@ -1494,10 +1487,8 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	// so make up the object as best we can assuming it got
 	// uploaded properly. If size < 0 then we need to do the HEAD.
 	if o.fs.opt.NoHead && size >= 0 {
-		o.md5 = md5sumHex
 		o.bytes = size
 		o.lastModified = time.Now()
-		// o.properties = req.Metadata
 
 		// If we have done a single part PUT request then we can read these
 		if resp != nil {
@@ -1510,8 +1501,9 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	}
 
 	// Read the metadata from the newly created object
-	o.properties = nil // wipe old metadata
+	o.properties = nil // wipe old properties
 	o.readMetaData(ctx)
+	o.readProperties(ctx)
 	return err
 }
 
