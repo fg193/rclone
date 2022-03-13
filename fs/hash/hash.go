@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"hash"
 	"hash/crc32"
+	"hash/crc64"
 	"io"
 	"strings"
 
@@ -74,6 +75,9 @@ var (
 	// CRC32 indicates CRC-32 support
 	CRC32 Type
 
+	// CRC64ECMA indicates CRC-64 support with the polynomial defined in ECMA 182
+	CRC64ECMA Type
+
 	// SHA256 indicates SHA-256 support
 	SHA256 Type
 )
@@ -83,6 +87,7 @@ func init() {
 	SHA1 = RegisterHash("sha1", "SHA-1", 40, sha1.New)
 	Whirlpool = RegisterHash("whirlpool", "Whirlpool", 128, whirlpool.New)
 	CRC32 = RegisterHash("crc32", "CRC-32", 8, func() hash.Hash { return crc32.NewIEEE() })
+	CRC64ECMA = RegisterHash("crc64ecma", "CRC-64-ECMA", 16, func() hash.Hash { return crc64.New(crc64.MakeTable(crc64.ECMA)) })
 	SHA256 = RegisterHash("sha256", "SHA-256", 64, sha256.New)
 }
 
