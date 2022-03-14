@@ -146,18 +146,18 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	var o Object
 	parent, name := path.Split(remote)
-	err := f.db.
+	ret := f.db.
 		WithContext(ctx).
-		First(&o, &Object{FS: f, Parent: &parent, FileName: name}).
-		Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+		Find(&o, &Object{FS: f, Parent: &parent, FileName: name})
+	if ret.RowsAffected <= 0 {
 		return nil, fs.ErrorObjectNotFound
-	} else if o.Mode.IsDir() {
+	}
+	if o.Mode.IsDir() {
 		return nil, fs.ErrorIsDir
 	}
 
 	o.FS = f
-	return &RegularFile{o}, err
+	return &RegularFile{o}, ret.Error
 }
 
 // List the objects and directories in dir into entries.  The
