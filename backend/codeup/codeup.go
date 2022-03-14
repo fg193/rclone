@@ -108,14 +108,20 @@ func (f *Fs) Features() *fs.Features {
 
 // NewFs constructs an Fs from the path, bucket:path
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
+	root = strings.Trim(root, "/")
+	if len(root) > 0 {
+		root += "/"
+	}
+
 	f := &Fs{
 		Remote: name,
-		root:   strings.Trim(root, "/"),
+		root:   root,
 	}
 	err := configstruct.Set(m, &f.opts)
 	if err != nil {
 		return nil, err
 	}
+
 	for _, hashName := range f.opts.Hashes {
 		var ht hash.Type
 		if err := ht.Set(hashName); err != nil {
@@ -123,6 +129,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		}
 		f.hashSet.Add(ht)
 	}
+
 	f.httpCli = rest.NewClient(http.DefaultClient)
 	f.httpCli.SetRoot(fmt.Sprintf("https://packages.aliyun.com/api/protocol/%s/GENERIC/flow_generic_repo/files/", f.opts.Org))
 	f.httpCli.SetUserPass(f.opts.User, f.opts.Password)
@@ -134,18 +141,22 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		WriteMimeType:           true,
 	}).Fill(ctx, f)
 
-	f.db, err = gorm.Open(sqlite.Open(f.opts.Database), &gorm.Config{
+	if f.db, err = gorm.Open(sqlite.Open(f.opts.Database), &gorm.Config{
 		SkipDefaultTransaction: true,
-	})
-	f.db.AutoMigrate(new(Object))
-	return f, err
+	}); err != nil {
+		return nil, err
+	}
+	if err = f.db.AutoMigrate(new(Object)); err != nil {
+		return nil, err
+	}
+	return f, nil
 }
 
 // NewObject finds the Object at remote.  If it can't be found
 // it returns the error fs.ErrorObjectNotFound.
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	var o Object
-	parent, name := path.Split(remote)
+	parent, name := path.Split(path.Join(f.root, remote))
 	ret := f.db.
 		WithContext(ctx).
 		Find(&o, &Object{FS: f, Parent: &parent, FileName: name})
@@ -171,6 +182,7 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 // found.
 func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
 	var objects []Object
+	dir = path.Join(f.root, dir)
 	if len(dir) > 0 {
 		dir += "/"
 	}
@@ -203,6 +215,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 // of listing recursively that doing a directory traversal.
 func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (err error) {
 	var objects []Object
+	dir = path.Join(f.root, dir)
 	if len(dir) > 0 {
 		dir += "/"
 	}
@@ -312,8 +325,8 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		o.FileSize = resp.Object.FileSize
 	}
 
-	prevObj, err := f.NewObject(ctx, fullPath)
 	r := &RegularFile{o}
+	prevObj, err := f.NewObject(ctx, o.Remote())
 	if errors.Is(err, fs.ErrorObjectNotFound) {
 		// create new file
 	} else if err != nil {
@@ -348,8 +361,13 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 func (f *Fs) Rmdir(ctx context.Context, dir string) (err error) {
 	var children int64
 	dir = path.Join(f.root, dir)
+	parent, name := path.Split(dir)
+	if len(dir) > 0 {
+		dir += "/"
+	}
 	err = f.db.
-		Where(&Object{Parent: &dir}).
+		Model(new(Object)).
+		Where(&Object{FS: f, Parent: &dir}).
 		Limit(1).
 		Count(&children).
 		Error
@@ -360,8 +378,7 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) (err error) {
 		return fs.ErrorDirectoryNotEmpty
 	}
 
-	parent, name := path.Split(dir)
-	ret := f.db.Delete(nil, &Object{FS: f, Parent: &parent, FileName: name, Mode: os.ModeDir})
+	ret := f.db.Delete(new(Object), &Object{FS: f, Parent: &parent, FileName: name, Mode: os.ModeDir})
 	if ret.Error != nil {
 		return ret.Error
 	}
@@ -456,7 +473,7 @@ func (o *Object) String() string {
 
 // Remote returns the remote path
 func (o *Object) Remote() string {
-	return path.Join(*o.Parent, o.FileName)
+	return strings.TrimPrefix(path.Join(*o.Parent, o.FileName), o.FS.root)
 }
 
 // Hash returns the hash of an object returning a lowercase hex string
