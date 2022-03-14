@@ -288,7 +288,14 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 
 	_, err = f.httpCli.CallJSON(ctx, &opts, nil, &resp)
 	if err != nil {
-		return nil, err
+		if o.FileSize > 0 {
+			return nil, err
+		}
+
+		// codeUp always returns 400 if file is empty
+		// TODO: skip this useless request
+		o.RealPath = ""
+		o.Version = 0
 	}
 
 	o.Hashes = resp.Object.Hashes
@@ -535,6 +542,10 @@ func (r *RegularFile) Remove(ctx context.Context) (err error) {
 // unlink checks whether the version reference count is no more than one.
 // If so, remove this version from the object storage; otherwise do nothing.
 func (r *RegularFile) unlink(ctx context.Context) (err error) {
+	if r.FileSize <= 0 {
+		return
+	}
+
 	count, err := r.refCount(ctx)
 	if err != nil || count > 1 {
 		return
