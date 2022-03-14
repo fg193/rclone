@@ -68,6 +68,8 @@ require (
 	golang.org/x/time v0.0.0-20210723032227-1f47c861a9ac
 	google.golang.org/api v0.60.0
 	gopkg.in/yaml.v2 v2.4.0
+	gorm.io/driver/sqlite v1.3.1
+	gorm.io/gorm v1.23.2
 	storj.io/uplink v1.7.0
 )
 
@@ -99,11 +101,14 @@ require (
 	github.com/jcmturner/gofork v1.0.0 // indirect
 	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
+	github.com/jinzhu/inflection v1.0.0 // indirect
+	github.com/jinzhu/now v1.1.4 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/mattn/go-ieproxy v0.0.1 // indirect
 	github.com/mattn/go-isatty v0.0.14 // indirect
+	github.com/mattn/go-sqlite3 v1.14.10 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/pengsrc/go-shared v0.2.1-0.20190131101655-1999055a4a14 // indirect
 	github.com/prometheus/client_model v0.2.0 // indirect
