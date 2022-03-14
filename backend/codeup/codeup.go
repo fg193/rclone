@@ -155,6 +155,8 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	} else if o.Mode.IsDir() {
 		return nil, fs.ErrorIsDir
 	}
+
+	o.FS = f
 	return &RegularFile{o}, err
 }
 
@@ -206,8 +208,8 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 	}
 	err = f.db.
 		WithContext(ctx).
-		Where("parent GLOB ?", dir+"*").
-		Find(&objects).
+		Where(&Object{FS: f}).
+		Find(&objects, "parent GLOB ?", dir+"*").
 		Error
 	if err != nil {
 		return err
@@ -219,10 +221,11 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 func (f *Fs) toDirEntries(objects []Object) (entries fs.DirEntries) {
 	entries = make(fs.DirEntries, 0, len(objects))
 	for _, o := range objects {
+		o.FS = f
 		if o.Mode.IsDir() {
 			entries = append(entries, &Directory{o})
 		} else {
-			entries = append(entries, &o)
+			entries = append(entries, &RegularFile{o})
 		}
 	}
 	return
@@ -309,8 +312,21 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		o.FileSize = resp.Object.FileSize
 	}
 
+	prevObj, err := f.NewObject(ctx, fullPath)
+	r := &RegularFile{o}
+	if errors.Is(err, fs.ErrorObjectNotFound) {
+		// create new file
+	} else if err != nil {
+		// should not get here
+		r.unlink(ctx)
+		return r, err
+	} else if err = prevObj.Remove(ctx); err != nil {
+		// overwrite existing file
+		r.unlink(ctx)
+		return r, err
+	}
 	err = f.db.Create(&o).Error
-	return &RegularFile{o}, err
+	return r, err
 }
 
 // Mkdir creates the directory if it doesn't exist
@@ -518,13 +534,16 @@ func (r *RegularFile) Open(ctx context.Context, options ...fs.OpenOption) (in io
 //
 // The new object may have been created if an error is returned
 func (r *RegularFile) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (err error) {
+	updated, err := r.FS.Put(ctx, in, src, options...)
 	if err != nil {
-		return fmt.Errorf("failed to update memory object: %w", err)
+		return
 	}
+
+	r = updated.(*RegularFile)
 	r.FileSize = src.Size()
 	r.SetModTime(ctx, src.ModTime(ctx))
 	r.MIMEType = fs.MimeType(ctx, src)
-	return r.FS.db.Updates(&r).Error
+	return r.FS.db.Updates(&r.Object).Error
 }
 
 // Remove decreases the version reference count by one,
@@ -535,8 +554,10 @@ func (r *RegularFile) Remove(ctx context.Context) (err error) {
 		return err
 	}
 
-	r.unlink(ctx)
-	return r.FS.db.Delete(&r).Error
+	if err = r.unlink(ctx); err != nil {
+		return err
+	}
+	return r.FS.db.Delete(&r.Object, &r).Error
 }
 
 // unlink checks whether the version reference count is no more than one.
@@ -566,6 +587,7 @@ func (r *RegularFile) unlink(ctx context.Context) (err error) {
 func (o *Object) refCount(ctx context.Context) (count int64, err error) {
 	err = o.FS.db.
 		WithContext(ctx).
+		Model(o).
 		Where(&Object{FS: o.FS, RealPath: o.RealPath, Version: o.Version}).
 		Count(&count).
 		Error
