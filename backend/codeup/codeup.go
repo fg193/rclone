@@ -408,10 +408,19 @@ func (f *Fs) Hashes() hash.Set {
 
 // PublicLink generates a public link to the remote path (usually readable by anyone)
 func (f *Fs) PublicLink(ctx context.Context, remote string, expire fs.Duration, unlink bool) (link string, err error) {
+	if unlink {
+		return link, fs.ErrorNotImplemented
+	}
+
 	o, err := f.NewObject(ctx, remote)
 	if err != nil {
 		return
 	}
+
+	if o.Size() <= 0 {
+		return link, fs.ErrorCantUploadEmptyFiles
+	}
+
 	return o.(*RegularFile).getLink(ctx)
 }
 
@@ -491,12 +500,14 @@ type RegularFile struct {
 func (RegularFile) Storable() bool {
 	return true
 }
+
 func (r *RegularFile) getLink(ctx context.Context) (link string, err error) {
 	opts := rest.Opts{
-		Method:     http.MethodGet,
-		Path:       r.RealPath,
-		Parameters: NewVersionParams(r.Object.Version),
-		NoRedirect: true,
+		Method:       http.MethodGet,
+		Path:         r.RealPath,
+		Parameters:   NewVersionParams(r.Object.Version),
+		NoRedirect:   true,
+		IgnoreStatus: true,
 	}
 	resp, err := r.FS.httpCli.Call(ctx, &opts)
 	if err != nil {
@@ -504,6 +515,11 @@ func (r *RegularFile) getLink(ctx context.Context) (link string, err error) {
 	}
 
 	resp.Body.Close()
+	if resp.StatusCode < http.StatusMovedPermanently ||
+		http.StatusPermanentRedirect < resp.StatusCode {
+		return link, fmt.Errorf("expected redirect, got %d %s", resp.StatusCode, resp.Status)
+	}
+
 	url, err := resp.Location()
 	if err != nil {
 		return
@@ -514,15 +530,14 @@ func (r *RegularFile) getLink(ctx context.Context) (link string, err error) {
 
 // Open an object for read
 func (r *RegularFile) Open(ctx context.Context, options ...fs.OpenOption) (in io.ReadCloser, err error) {
-	opts := rest.Opts{
-		Method:       http.MethodGet,
-		ExtraHeaders: make(map[string]string, len(options)),
-	}
-	for _, option := range options {
-		k, v := option.Header()
-		opts.ExtraHeaders[k] = v
+	if r.FileSize <= 0 {
+		return nil, nil
 	}
 
+	opts := rest.Opts{
+		Method:  http.MethodGet,
+		Options: options,
+	}
 	if opts.RootURL, err = r.getLink(ctx); err != nil {
 		return
 	}
