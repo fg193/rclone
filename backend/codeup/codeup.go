@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -22,6 +23,8 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+const linkSuffix = ".rclonelink"
 
 // Register with Fs
 func init() {
@@ -155,8 +158,10 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 // NewObject finds the Object at remote.  If it can't be found
 // it returns the error fs.ErrorObjectNotFound.
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
-	var o Object
 	parent, name := path.Split(path.Join(f.root, remote))
+	name = strings.TrimSuffix(name, linkSuffix)
+
+	var o Object
 	ret := f.db.
 		WithContext(ctx).
 		Find(&o, &Object{FS: f, Parent: &parent, FileName: name})
@@ -268,6 +273,10 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		Version:  time.Now().UnixNano(),
 	}
 
+	if strings.HasSuffix(name, linkSuffix) {
+		return f.putSymLink(ctx, &o, in)
+	}
+
 	for _, ht := range f.hashSet.Array() {
 		var digest string
 		digest, err = src.Hash(ctx, ht)
@@ -342,6 +351,30 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 	return r, err
 }
 
+func (f *Fs) putSymLink(ctx context.Context, o *Object, in io.Reader) (_ fs.Object, err error) {
+	o.Mode = os.ModeSymlink
+	o.FileName = o.FileName[:len(o.FileName)-len(linkSuffix)]
+	readLink, err := ioutil.ReadAll(in)
+	if err != nil {
+		return
+	}
+	o.RealPath = string(readLink)
+
+	r := &RegularFile{*o}
+	prevObj, err := f.NewObject(ctx, o.Remote())
+	if errors.Is(err, fs.ErrorObjectNotFound) {
+		// create new link
+	} else if err != nil {
+		// should not get here
+		return r, err
+	} else if err = prevObj.Remove(ctx); err != nil {
+		// overwrite existing link
+		return r, err
+	}
+	err = f.db.Create(&o).Error
+	return r, err
+}
+
 // Mkdir creates the directory if it doesn't exist
 func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	parent, name := path.Split(path.Join(f.root, dir))
@@ -408,7 +441,9 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		return nil, fs.ErrorCantCopy
 	}
 
-	parent, name := path.Split(remote)
+	parent, name := path.Split(path.Join(f.root, remote))
+	name = strings.TrimSuffix(name, linkSuffix)
+
 	var destObj Object
 	destObj = *&srcFile.Object
 	destObj.ID = 0
@@ -473,7 +508,12 @@ func (o *Object) String() string {
 
 // Remote returns the remote path
 func (o *Object) Remote() string {
-	return strings.TrimPrefix(path.Join(*o.Parent, o.FileName), o.FS.root)
+	fileName := o.FileName
+	if o.Mode&os.ModeSymlink > 0 {
+		fileName += linkSuffix
+	}
+
+	return strings.TrimPrefix(path.Join(*o.Parent, fileName), o.FS.root)
 }
 
 // Hash returns the hash of an object returning a lowercase hex string
@@ -547,6 +587,10 @@ func (r *RegularFile) getLink(ctx context.Context) (link string, err error) {
 
 // Open an object for read
 func (r *RegularFile) Open(ctx context.Context, options ...fs.OpenOption) (in io.ReadCloser, err error) {
+	if r.Mode&os.ModeSymlink > 0 {
+		return ioutil.NopCloser(strings.NewReader(r.RealPath)), nil
+	}
+
 	if r.FileSize <= 0 {
 		return nil, nil
 	}
@@ -595,7 +639,7 @@ func (r *RegularFile) Remove(ctx context.Context) (err error) {
 // unlink checks whether the version reference count is no more than one.
 // If so, remove this version from the object storage; otherwise do nothing.
 func (r *RegularFile) unlink(ctx context.Context) (err error) {
-	if r.FileSize <= 0 {
+	if r.FileSize <= 0 || r.Mode&os.ModeSymlink > 0 {
 		return
 	}
 
