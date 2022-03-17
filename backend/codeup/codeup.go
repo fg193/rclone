@@ -316,6 +316,7 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		FileSize: src.Size(),
 		MTime:    src.ModTime(ctx).UnixNano(),
 		Contents: fullPath,
+		ID:       time.Now().UnixNano(),
 	}
 
 	if strings.HasSuffix(name, linkSuffix) {
@@ -436,6 +437,7 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 		FileName: name,
 		Mode:     os.ModeDir,
 		MTime:    time.Now().UnixNano(),
+		ID:       time.Now().UnixNano(),
 	}
 	return f.db.Create(&o).Error
 }
@@ -498,7 +500,7 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 
 	var destObj Object
 	destObj = *&srcFile.Object
-	destObj.ID = 0
+	destObj.ID = time.Now().UnixNano()
 	destObj.Parent = &parent
 	destObj.FileName = name
 	err := f.db.Create(&destObj).Error
