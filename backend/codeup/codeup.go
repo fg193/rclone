@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rclone/rclone/cmd/serve/http/data"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/configstruct"
@@ -32,6 +33,24 @@ func init() {
 		Name:        "codeup",
 		Description: "Alicloud CodeUp Package Registry, with metadata in local SQL database",
 		NewFs:       NewFs,
+		CommandHelp: []fs.CommandHelp{{
+			Name:  "serve",
+			Short: "Serve the remote over HTTP",
+			Long: `Usage Examples:
+
+    rclone backend serve remote: -o ListenAddr=0.0.0.0:8080 -o Template=_site/fancy-index/index.html
+			` + data.Help,
+			Opts: map[string]string{
+				"Template":           "Path to the HTML template for directory indexing",
+				"ListenAddr":         "Port to listen on",
+				"BaseURL":            "Prefix to strip from URLs",
+				"ServerReadTimeout":  "Timeout for server reading data",
+				"ServerWriteTimeout": "Timeout for server writing data",
+				"SslCert":            "Path to SSL PEM key (concatenation of server cert and CA cert)",
+				"SslKey":             "Path to SSL PEM Private key",
+				"ClientCA":           "Client certificate authority to verify clients with",
+			},
+		}},
 		Options: []fs.Option{{
 			Name: "org",
 			Help: `The organization ID.
@@ -155,11 +174,18 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	return f, nil
 }
 
-// NewObject finds the Object at remote.  If it can't be found
+// getObject finds the Object at remote.  If it can't be found
 // it returns the error fs.ErrorObjectNotFound.
-func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
+func (f *Fs) getObject(ctx context.Context, remote string) (*Object, error) {
 	parent, name := path.Split(path.Join(f.root, remote))
 	name = strings.TrimSuffix(name, linkSuffix)
+	if len(name) <= 0 {
+		// root directory special case
+		if len(parent) <= 0 {
+			return &Object{FS: f, Parent: &parent, Mode: os.ModeDir}, nil
+		}
+		return nil, fs.ErrorNotAFile
+	}
 
 	var o Object
 	ret := f.db.
@@ -168,12 +194,23 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	if ret.RowsAffected <= 0 {
 		return nil, fs.ErrorObjectNotFound
 	}
+
+	o.FS = f
+	return &o, ret.Error
+}
+
+// NewObject finds the regular file of symbolic link at remote.
+func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
+	o, err := f.getObject(ctx, remote)
+	if err != nil {
+		return nil, err
+	}
+
 	if o.Mode.IsDir() {
 		return nil, fs.ErrorIsDir
 	}
 
-	o.FS = f
-	return &RegularFile{o}, ret.Error
+	return &RegularFile{*o}, nil
 }
 
 // List the objects and directories in dir into entries.  The
@@ -186,7 +223,14 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 // This should return ErrDirNotFound if the directory isn't
 // found.
 func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
-	var objects []Object
+	objects, err := f.list(ctx, dir)
+	if err != nil {
+		return
+	}
+	return f.toDirEntries(objects), nil
+}
+
+func (f *Fs) list(ctx context.Context, dir string) (objects []Object, err error) {
 	dir = path.Join(f.root, dir)
 	if len(dir) > 0 {
 		dir += "/"
@@ -195,11 +239,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 		WithContext(ctx).
 		Find(&objects, &Object{FS: f, Parent: &dir}).
 		Error
-	if err != nil {
-		return
-	}
-
-	return f.toDirEntries(objects), nil
+	return
 }
 
 // ListR lists the objects and directories of the Fs starting
@@ -476,6 +516,24 @@ func (f *Fs) PublicLink(ctx context.Context, remote string, expire fs.Duration, 
 	return o.(*RegularFile).getLink(ctx)
 }
 
+// Command the backend to run a named command
+//
+// The command run is name
+// args may be used to read arguments from
+// opts may be used to read optional arguments from
+//
+// The result should be capable of being JSON encoded
+// If it is a string or a []string it will be shown to the user
+// otherwise it will be JSON encoded and shown to the user like that
+func (f *Fs) Command(ctx context.Context, name string, args []string, opts map[string]string) (out interface{}, err error) {
+	switch name {
+	case "serve":
+		return nil, f.serve(ctx, opts)
+	default:
+		return nil, fs.ErrorCommandNotFound
+	}
+}
+
 // ------------------------------------------------------------
 
 // Object describes a file, either a regular file or a directory
@@ -512,7 +570,10 @@ func (o *Object) Remote() string {
 	if o.Mode&os.ModeSymlink > 0 {
 		fileName += linkSuffix
 	}
+	return o.remote(fileName)
+}
 
+func (o *Object) remote(fileName string) string {
 	return strings.TrimPrefix(path.Join(*o.Parent, fileName), o.FS.root)
 }
 
@@ -740,6 +801,7 @@ var (
 	_ fs.ListRer      = &Fs{}
 	_ fs.PutStreamer  = &Fs{}
 	_ fs.PublicLinker = &Fs{}
+	_ fs.Commander    = &Fs{}
 	_ fs.Object       = &RegularFile{}
 	_ fs.MimeTyper    = &Object{}
 )
