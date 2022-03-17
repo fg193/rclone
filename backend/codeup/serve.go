@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -97,8 +98,10 @@ func (s *server) handler(w http.ResponseWriter, r *http.Request) {
 		err = s.serveDir(ctx, w, r, o)
 	case o.Mode.IsRegular():
 		err = s.serveFile(ctx, w, r, o)
-	default:
+	case o.Mode&os.ModeSymlink > 0:
 		err = s.serveSymLink(ctx, w, r, o)
+	default:
+		err = s.serveInline(ctx, w, r, o)
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -151,6 +154,18 @@ func (s *server) serveFile(ctx context.Context, w http.ResponseWriter, r *http.R
 }
 
 func (s *server) serveSymLink(ctx context.Context, w http.ResponseWriter, r *http.Request, o *Object) (err error) {
-	http.Redirect(w, r, o.RealPath, http.StatusFound)
+	http.Redirect(w, r, o.Contents, http.StatusFound)
+	return
+}
+
+func (s *server) serveInline(ctx context.Context, w http.ResponseWriter, r *http.Request, o *Object) (err error) {
+	w.Header().Set("Content-Length", strconv.Itoa(len(o.Contents)))
+	w.Header().Set("Last-Modified", o.ModTime(ctx).UTC().Format(http.TimeFormat))
+
+	if r.Method == "HEAD" {
+		return
+	}
+
+	_, err = w.Write([]byte(o.Contents))
 	return
 }

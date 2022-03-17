@@ -78,9 +78,13 @@ reset it at https://packages.aliyun.com/system-settings`,
 			Name: "database",
 			Help: `The path of the local metadata database.`,
 		}, {
-			Name: "hashes",
-			Help: `List of supported hash types, splitted by comma.`,
-
+			Name:     "max_inline_size",
+			Help:     `Files smaller than this threshold will be saved in the local database.`,
+			Default:  1 * fs.Kibi,
+			Advanced: true,
+		}, {
+			Name:     "hashes",
+			Help:     `List of supported hash types, splitted by commas.`,
 			Default:  "md5,sha1,sha256,crc64ecma",
 			Advanced: true,
 		}},
@@ -94,12 +98,14 @@ type Options struct {
 	Password string `config:"password"`
 	Database string `config:"database"`
 
-	Hashes fs.CommaSepList `config:"hashes"`
+	MaxInlineSize fs.SizeSuffix   `config:"max_inline_size"`
+	Hashes        fs.CommaSepList `config:"hashes"`
 }
 
 // Fs represents the SQL-based metadata storage
 type Fs struct {
-	Remote   string       `gorm:"notNull;uniqueIndex:idx_parent_name;uniqueIndex:idx_real_path_version"` // name of this remote
+	// name of this remote
+	Remote   string       `gorm:"notNull;uniqueIndex:idx_parent_name"`
 	root     string       // the path we are working on if any
 	opts     Options      // parsed config options
 	features *fs.Features // optional features
@@ -309,12 +315,17 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		FileName: name,
 		FileSize: src.Size(),
 		MTime:    src.ModTime(ctx).UnixNano(),
-		RealPath: fullPath,
-		Version:  time.Now().UnixNano(),
+		Contents: fullPath,
 	}
 
 	if strings.HasSuffix(name, linkSuffix) {
-		return f.putSymLink(ctx, &o, in)
+		o.Mode = os.ModeSymlink
+		o.FileName = o.FileName[:len(o.FileName)-len(linkSuffix)]
+		return f.putInline(ctx, &o, in)
+	}
+	if 0 <= src.Size() && src.Size() <= int64(f.opts.MaxInlineSize) {
+		o.Mode = os.ModeCharDevice
+		return f.putInline(ctx, &o, in)
 	}
 
 	for _, ht := range f.hashSet.Array() {
@@ -323,6 +334,7 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		o.Hashes.Set(ht, digest)
 	}
 
+	o.Version = time.Now().UnixNano()
 	params := NewVersionParams(o.Version)
 	params.Set("fileName", o.FileName)
 	params.Set("downloadFileName", o.FileName)
@@ -357,9 +369,11 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 			return nil, err
 		}
 
+		// PutStream an empty file
 		// codeUp always returns 400 if file is empty
 		// TODO: skip this useless request
-		o.RealPath = ""
+		o.Mode = os.ModeCharDevice
+		o.Contents = ""
 		o.Version = 0
 	}
 
@@ -391,14 +405,12 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 	return r, err
 }
 
-func (f *Fs) putSymLink(ctx context.Context, o *Object, in io.Reader) (_ fs.Object, err error) {
-	o.Mode = os.ModeSymlink
-	o.FileName = o.FileName[:len(o.FileName)-len(linkSuffix)]
-	readLink, err := ioutil.ReadAll(in)
+func (f *Fs) putInline(ctx context.Context, o *Object, in io.Reader) (_ fs.Object, err error) {
+	contents, err := ioutil.ReadAll(in)
 	if err != nil {
 		return
 	}
-	o.RealPath = string(readLink)
+	o.Contents = string(contents)
 
 	r := &RegularFile{*o}
 	prevObj, err := f.NewObject(ctx, o.Remote())
@@ -547,8 +559,8 @@ type Object struct {
 	MTime    int64       `gorm:"notNull"`
 	MIMEType string      `gorm:"default:null"`
 	Hashes   Hashes      `gorm:"embedded;embeddedPrefix:hash_"`
-	RealPath string      `gorm:"default:null;uniqueIndex:idx_real_path_version"`
-	Version  int64       `gorm:"default:null;uniqueIndex:idx_real_path_version"`
+	Contents string      `gorm:"default:null"`
+	Version  int64       `gorm:"default:null"`
 }
 
 // Fs returns the parent Fs
@@ -622,7 +634,7 @@ func (RegularFile) Storable() bool {
 func (r *RegularFile) getLink(ctx context.Context) (link string, err error) {
 	opts := rest.Opts{
 		Method:       http.MethodGet,
-		Path:         r.RealPath,
+		Path:         r.Contents,
 		Parameters:   NewVersionParams(r.Object.Version),
 		NoRedirect:   true,
 		IgnoreStatus: true,
@@ -648,8 +660,8 @@ func (r *RegularFile) getLink(ctx context.Context) (link string, err error) {
 
 // Open an object for read
 func (r *RegularFile) Open(ctx context.Context, options ...fs.OpenOption) (in io.ReadCloser, err error) {
-	if r.Mode&os.ModeSymlink > 0 {
-		return ioutil.NopCloser(strings.NewReader(r.RealPath)), nil
+	if !r.Mode.IsRegular() {
+		return ioutil.NopCloser(strings.NewReader(r.Contents)), nil
 	}
 
 	if r.FileSize <= 0 {
@@ -700,7 +712,7 @@ func (r *RegularFile) Remove(ctx context.Context) (err error) {
 // unlink checks whether the version reference count is no more than one.
 // If so, remove this version from the object storage; otherwise do nothing.
 func (r *RegularFile) unlink(ctx context.Context) (err error) {
-	if r.FileSize <= 0 || r.Mode&os.ModeSymlink > 0 {
+	if r.FileSize <= 0 || !r.Mode.IsRegular() {
 		return
 	}
 
@@ -713,7 +725,7 @@ func (r *RegularFile) unlink(ctx context.Context) (err error) {
 		resp DeleteVersionResponse
 		opts = rest.Opts{
 			Method:     http.MethodDelete,
-			Path:       r.RealPath,
+			Path:       r.Contents,
 			Parameters: NewVersionParams(r.Version),
 		}
 	)
@@ -725,7 +737,7 @@ func (o *Object) refCount(ctx context.Context) (count int64, err error) {
 	err = o.FS.db.
 		WithContext(ctx).
 		Model(o).
-		Where(&Object{FS: o.FS, RealPath: o.RealPath, Version: o.Version}).
+		Where(&Object{FS: o.FS, Hashes: o.Hashes, Version: o.Version}).
 		Count(&count).
 		Error
 	return
@@ -758,7 +770,7 @@ func (d *Directory) ID() (id string) {
 // ------------------------------------------------------------
 
 type Hashes struct {
-	MD5       string `hash:"md5" json:"fileMd5" header:"ETag" gorm:"default:null"`
+	MD5       string `hash:"md5" json:"fileMd5" header:"ETag" gorm:"default:null;index:idx_hash_md5"`
 	SHA1      string `hash:"sha1" json:"fileSha1" gorm:"default:null"`
 	CRC64ECMA string `hash:"crc64ecma" header:"x-oss-hash-crc64ecma" gorm:"default:null"`
 	SHA256    string `hash:"sha256" json:"fileSha256" gorm:"default:null"`
