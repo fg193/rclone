@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"reflect"
@@ -57,8 +58,8 @@ func init() {
 
 Organization ID should be 24 hexadecimal digits.
 
-It presents in the URL path of the NPM registry, which is shown on the
-NPM registry guide page "https://package.aliyun.com/npm/npm-registry/guide",
+It presents in the URL path of the repository, which is shown on the
+page "https://packages.aliyun.com/generic/flow_generic_repo/setting",
 like "https://package.aliyun.com/{organizationID}/npm/npm-registry".`,
 		}, {
 			Name: "user",
@@ -67,7 +68,8 @@ like "https://package.aliyun.com/{organizationID}/npm/npm-registry".`,
 User ID should be 24 hexadecimal digits.
 
 You may get it from "https://package.aliyun.com/npm/npm-registry/guide" or
-"https://packages.aliyun.com/system-settings".`,
+"https://packages.aliyun.com/system-settings".
+Do not confuse it with the organization ID, which is in the repository URL.`,
 		}, {
 			Name: "password",
 			Help: `The password for Alicloud Package Registry.
@@ -315,7 +317,7 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		FileName: name,
 		FileSize: src.Size(),
 		MTime:    src.ModTime(ctx).UnixNano(),
-		Contents: fullPath,
+		Contents: url.QueryEscape(fullPath),
 		ID:       time.Now().UnixNano(),
 	}
 
