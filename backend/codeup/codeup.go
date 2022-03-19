@@ -22,7 +22,7 @@ import (
 	"github.com/rclone/rclone/fs/config/configstruct"
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/lib/rest"
-	"gorm.io/driver/sqlite"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -76,7 +76,7 @@ You may get it from "https://package.aliyun.com/npm/npm-registry/guide" or
 reset it at https://packages.aliyun.com/system-settings`,
 		}, {
 			Name: "database",
-			Help: `The path of the local metadata database.`,
+			Help: `The DSN of the PostgreSQL metadata database.`,
 		}, {
 			Name:     "max_inline_size",
 			Help:     `Files smaller than this threshold will be saved in the local database.`,
@@ -169,7 +169,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		WriteMimeType:           true,
 	}).Fill(ctx, f)
 
-	if f.db, err = gorm.Open(sqlite.Open(f.opts.Database), &gorm.Config{
+	if f.db, err = gorm.Open(postgres.Open(f.opts.Database), &gorm.Config{
 		SkipDefaultTransaction: true,
 	}); err != nil {
 		return nil, err
@@ -273,7 +273,7 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 	err = f.db.
 		WithContext(ctx).
 		Where(&Object{FS: f}).
-		Find(&objects, "parent GLOB ?", dir+"*").
+		Find(&objects, "starts_with(parent, ?)", dir).
 		Error
 	if err != nil {
 		return err
@@ -774,8 +774,8 @@ func (d *Directory) ID() (id string) {
 type Hashes struct {
 	MD5       string `hash:"md5" json:"fileMd5" header:"ETag" gorm:"default:null;index:idx_hash_md5"`
 	SHA1      string `hash:"sha1" json:"fileSha1" gorm:"default:null"`
-	CRC64ECMA string `hash:"crc64ecma" header:"x-oss-hash-crc64ecma" gorm:"default:null"`
 	SHA256    string `hash:"sha256" json:"fileSha256" gorm:"default:null"`
+	CRC64ECMA string `hash:"crc64ecma" header:"x-oss-hash-crc64ecma" gorm:"default:null"`
 }
 
 func (h *Hashes) Get(ht hash.Type) string {
