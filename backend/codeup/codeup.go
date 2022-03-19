@@ -26,8 +26,6 @@ import (
 	"gorm.io/gorm"
 )
 
-const linkSuffix = ".rclonelink"
-
 // Register with Fs
 func init() {
 	fs.Register(&fs.RegInfo{
@@ -186,7 +184,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 // it returns the error fs.ErrorObjectNotFound.
 func (f *Fs) getObject(ctx context.Context, remote string) (*Object, error) {
 	parent, name := path.Split(path.Join(f.root, remote))
-	name = strings.TrimSuffix(name, linkSuffix)
+	name = strings.TrimSuffix(name, fs.LinkSuffix)
 	if len(name) <= 0 {
 		// root directory special case
 		if len(parent) <= 0 {
@@ -321,9 +319,9 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		ID:       time.Now().UnixNano(),
 	}
 
-	if strings.HasSuffix(name, linkSuffix) {
+	if strings.HasSuffix(name, fs.LinkSuffix) {
 		o.Mode = os.ModeSymlink
-		o.FileName = o.FileName[:len(o.FileName)-len(linkSuffix)]
+		o.FileName = o.FileName[:len(o.FileName)-len(fs.LinkSuffix)]
 		return f.putInline(ctx, &o, in)
 	}
 	if 0 <= src.Size() && src.Size() <= int64(f.opts.MaxInlineSize) {
@@ -498,7 +496,7 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	}
 
 	parent, name := path.Split(path.Join(f.root, remote))
-	name = strings.TrimSuffix(name, linkSuffix)
+	name = strings.TrimSuffix(name, fs.LinkSuffix)
 
 	var destObj Object
 	destObj = *&srcFile.Object
@@ -584,7 +582,7 @@ func (o *Object) String() string {
 func (o *Object) Remote() string {
 	fileName := o.FileName
 	if o.Mode&os.ModeSymlink > 0 {
-		fileName += linkSuffix
+		fileName += fs.LinkSuffix
 	}
 	return o.remote(fileName)
 }

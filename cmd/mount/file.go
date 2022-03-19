@@ -13,6 +13,7 @@ import (
 
 	"bazil.org/fuse"
 	fusefs "bazil.org/fuse/fs"
+	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/log"
 	"github.com/rclone/rclone/vfs"
 )
@@ -36,8 +37,8 @@ func (f *File) Attr(ctx context.Context, a *fuse.Attr) (err error) {
 	a.Gid = f.VFS().Opt.GID
 	a.Uid = f.VFS().Opt.UID
 	a.Mode = f.VFS().Opt.FilePerms
-	if (strings.HasSuffix(f.File.Name(), ".rclonelink")) {
-		defer log.Trace(f, f.File.Name() + " is a symlink")("a=%+v, err=%v", a, &err)
+	if strings.HasSuffix(f.File.Name(), fs.LinkSuffix) {
+		log.Trace(f, "symlink %s", f.File.Name())
 		a.Mode = 0777 | os.ModeSymlink
 	}
 	a.Size = Size
