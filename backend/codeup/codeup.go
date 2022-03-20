@@ -2,6 +2,7 @@
 package codeup
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -315,7 +316,7 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		FileName: name,
 		FileSize: src.Size(),
 		MTime:    src.ModTime(ctx).UnixNano(),
-		Contents: url.QueryEscape(fullPath),
+		Contents: []byte(url.QueryEscape(fullPath)),
 		ID:       time.Now().UnixNano(),
 	}
 
@@ -374,7 +375,7 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		// codeUp always returns 400 if file is empty
 		// TODO: skip this useless request
 		o.Mode = os.ModeCharDevice
-		o.Contents = ""
+		o.Contents = nil
 		o.Version = 0
 	}
 
@@ -411,7 +412,7 @@ func (f *Fs) putInline(ctx context.Context, o *Object, in io.Reader) (_ fs.Objec
 	if err != nil {
 		return
 	}
-	o.Contents = string(contents)
+	o.Contents = contents
 
 	r := &RegularFile{*o}
 	prevObj, err := f.NewObject(ctx, o.Remote())
@@ -561,7 +562,7 @@ type Object struct {
 	MTime    int64       `gorm:"notNull"`
 	MIMEType string      `gorm:"default:null"`
 	Hashes   Hashes      `gorm:"embedded;embeddedPrefix:hash_"`
-	Contents string      `gorm:"default:null"`
+	Contents []byte      `gorm:"default:null"`
 	Version  int64       `gorm:"default:null"`
 }
 
@@ -636,7 +637,7 @@ func (RegularFile) Storable() bool {
 func (r *RegularFile) getLink(ctx context.Context) (link string, err error) {
 	opts := rest.Opts{
 		Method:       http.MethodGet,
-		Path:         r.Contents,
+		Path:         string(r.Contents),
 		Parameters:   NewVersionParams(r.Object.Version),
 		NoRedirect:   true,
 		IgnoreStatus: true,
@@ -663,7 +664,7 @@ func (r *RegularFile) getLink(ctx context.Context) (link string, err error) {
 // Open an object for read
 func (r *RegularFile) Open(ctx context.Context, options ...fs.OpenOption) (in io.ReadCloser, err error) {
 	if !r.Mode.IsRegular() {
-		return ioutil.NopCloser(strings.NewReader(r.Contents)), nil
+		return ioutil.NopCloser(bytes.NewReader(r.Contents)), nil
 	}
 
 	if r.FileSize <= 0 {
@@ -727,7 +728,7 @@ func (r *RegularFile) unlink(ctx context.Context) (err error) {
 		resp DeleteVersionResponse
 		opts = rest.Opts{
 			Method:     http.MethodDelete,
-			Path:       r.Contents,
+			Path:       string(r.Contents),
 			Parameters: NewVersionParams(r.Version),
 		}
 	)
