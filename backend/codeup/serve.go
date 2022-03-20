@@ -154,7 +154,7 @@ func (s *server) serveFile(ctx context.Context, w http.ResponseWriter, r *http.R
 }
 
 func (s *server) serveSymLink(ctx context.Context, w http.ResponseWriter, r *http.Request, o *Object) (err error) {
-	http.Redirect(w, r, o.Contents, http.StatusFound)
+	http.Redirect(w, r, string(o.Contents), http.StatusFound)
 	return
 }
 
