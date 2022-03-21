@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -315,15 +314,6 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 // Join's the remote onto the base URL
 func (f *Fs) url(remote string) string {
 	return f.endpointURL + rest.URLPathEscape(remote)
-}
-
-// parse s into an int64, on failure return def
-func parseInt64(s string, def int64) int64 {
-	n, e := strconv.ParseInt(s, 10, 64)
-	if e != nil {
-		return def
-	}
-	return n
 }
 
 // Errors returned by parseName
