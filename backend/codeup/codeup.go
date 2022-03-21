@@ -508,6 +508,28 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	return &RegularFile{destObj}, err
 }
 
+// Move src to this remote using server-side move operations.
+//
+// This is stored with the remote path given
+//
+// It returns the destination Object and a possible error
+//
+// Will only be called if src.Fs().Name() == f.Name()
+//
+// If it isn't possible then return fs.ErrorCantMove
+func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
+	file, ok := src.(*RegularFile)
+	if !ok {
+		return nil, fs.ErrorCantMove
+	}
+
+	parent, name := path.Split(path.Join(f.root, remote))
+	file.Parent = &parent
+	file.FileName = strings.TrimSuffix(name, fs.LinkSuffix)
+	err := f.db.Updates(&file.Object).Error
+	return file, err
+}
+
 // Hashes returns the supported hash sets.
 func (f *Fs) Hashes() hash.Set {
 	return f.hashSet
@@ -813,6 +835,7 @@ func (h *Hashes) Set(ht hash.Type, digest string) {
 var (
 	_ fs.Fs           = &Fs{}
 	_ fs.Copier       = &Fs{}
+	_ fs.Mover        = &Fs{}
 	_ fs.ListRer      = &Fs{}
 	_ fs.PutStreamer  = &Fs{}
 	_ fs.PublicLinker = &Fs{}
