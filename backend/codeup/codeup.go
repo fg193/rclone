@@ -237,15 +237,20 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 	return f.toDirEntries(objects), nil
 }
 
-func (f *Fs) list(ctx context.Context, dir string) (objects []Object, err error) {
+func (f *Fs) list(ctx context.Context, dir string) (objects []*Object, err error) {
 	dir = path.Join(f.root, dir)
 	if len(dir) > 0 {
 		dir += "/"
 	}
 	err = f.db.
 		WithContext(ctx).
+		Select(objectListColumns).
 		Find(&objects, &Object{FS: f, Parent: &dir}).
 		Error
+
+	for _, o := range objects {
+		o.FS = f
+	}
 	return
 }
 
@@ -266,13 +271,14 @@ func (f *Fs) list(ctx context.Context, dir string) (objects []Object, err error)
 // Don't implement this unless you have a more efficient way
 // of listing recursively that doing a directory traversal.
 func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (err error) {
-	var objects []Object
+	var objects []*Object
 	dir = path.Join(f.root, dir)
 	if len(dir) > 0 {
 		dir += "/"
 	}
 	err = f.db.
 		WithContext(ctx).
+		Select(objectListColumns).
 		Where(&Object{FS: f}).
 		Find(&objects, "starts_with(parent, ?)", dir).
 		Error
@@ -280,17 +286,19 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 		return err
 	}
 
+	for _, o := range objects {
+		o.FS = f
+	}
 	return callback(f.toDirEntries(objects))
 }
 
-func (f *Fs) toDirEntries(objects []Object) (entries fs.DirEntries) {
+func (f *Fs) toDirEntries(objects []*Object) (entries fs.DirEntries) {
 	entries = make(fs.DirEntries, 0, len(objects))
 	for _, o := range objects {
-		o.FS = f
 		if o.Mode.IsDir() {
-			entries = append(entries, &Directory{o})
+			entries = append(entries, &Directory{*o})
 		} else {
-			entries = append(entries, &RegularFile{o})
+			entries = append(entries, &RegularFile{*o})
 		}
 	}
 	return
@@ -588,6 +596,15 @@ type Object struct {
 	Version  int64       `gorm:"default:null"`
 }
 
+var objectListColumns = []string{
+	"id",
+	"parent",
+	"name",
+	"size",
+	"mode",
+	"m_time",
+}
+
 // Fs returns the parent Fs
 func (o *Object) Fs() fs.Info {
 	return o.FS
@@ -644,6 +661,13 @@ func (o *Object) SetModTime(ctx context.Context, modTime time.Time) error {
 	return o.FS.db.Updates(o).Error
 }
 
+func (o *Object) lazyLoad(ctx context.Context) error {
+	if o.FileSize == 0 || len(o.Contents) > 0 {
+		return nil
+	}
+	return o.FS.db.First(o, o.ID).Error
+}
+
 // ------------------------------------------------------------
 
 // RegularFile describes a regular file
@@ -657,6 +681,9 @@ func (RegularFile) Storable() bool {
 }
 
 func (r *RegularFile) getLink(ctx context.Context) (link string, err error) {
+	if err = r.lazyLoad(ctx); err != nil {
+		return
+	}
 	opts := rest.Opts{
 		Method:       http.MethodGet,
 		Path:         string(r.Contents),
@@ -686,6 +713,9 @@ func (r *RegularFile) getLink(ctx context.Context) (link string, err error) {
 // Open an object for read
 func (r *RegularFile) Open(ctx context.Context, options ...fs.OpenOption) (in io.ReadCloser, err error) {
 	if !r.Mode.IsRegular() {
+		if err = r.lazyLoad(ctx); err != nil {
+			return
+		}
 		return ioutil.NopCloser(bytes.NewReader(r.Contents)), nil
 	}
 
@@ -724,9 +754,11 @@ func (r *RegularFile) Update(ctx context.Context, in io.Reader, src fs.ObjectInf
 // which is the opposite action of Copy.
 func (r *RegularFile) Remove(ctx context.Context) (err error) {
 	// check object exists
-	if _, err = r.FS.NewObject(ctx, r.Remote()); err != nil {
+	var o fs.Object
+	if o, err = r.FS.NewObject(ctx, r.Remote()); err != nil {
 		return err
 	}
+	r = o.(*RegularFile)
 
 	if err = r.unlink(ctx); err != nil {
 		return err

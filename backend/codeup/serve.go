@@ -166,6 +166,9 @@ func (s *server) serveInline(ctx context.Context, w http.ResponseWriter, r *http
 		return
 	}
 
-	_, err = w.Write([]byte(o.Contents))
+	if err = o.lazyLoad(ctx); err != nil {
+		return
+	}
+	_, err = w.Write(o.Contents)
 	return
 }
