@@ -25,6 +25,7 @@ import (
 	"github.com/rclone/rclone/lib/rest"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // Register with Fs
@@ -172,6 +173,9 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 
 	if f.db, err = gorm.Open(postgres.Open(f.opts.Database), &gorm.Config{
 		SkipDefaultTransaction: true,
+		Logger: logger.Default.LogMode(
+			f.dbLogLevel(ctx)),
+		PrepareStmt: true,
 	}); err != nil {
 		return nil, err
 	}
@@ -179,6 +183,21 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		return nil, err
 	}
 	return f, nil
+}
+
+// dbLogLevel maps rclone global log levels to database log levels
+func (f *Fs) dbLogLevel(ctx context.Context) logger.LogLevel {
+	ci := fs.GetConfig(ctx)
+	switch {
+	case ci.LogLevel <= fs.LogLevelCritical:
+		return logger.Silent
+	case ci.LogLevel <= fs.LogLevelError:
+		return logger.Error
+	case ci.LogLevel <= fs.LogLevelNotice:
+		return logger.Warn
+	default:
+		return logger.Info
+	}
 }
 
 // getObject finds the Object at remote.  If it can't be found
@@ -411,7 +430,7 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		r.unlink(ctx)
 		return r, err
 	}
-	err = f.db.Create(&o).Error
+	err = f.db.WithContext(ctx).Create(&o).Error
 	return r, err
 }
 
@@ -433,7 +452,7 @@ func (f *Fs) putInline(ctx context.Context, o *Object, in io.Reader) (_ fs.Objec
 		// overwrite existing link
 		return r, err
 	}
-	err = f.db.Create(&o).Error
+	err = f.db.WithContext(ctx).Create(&o).Error
 	return r, err
 }
 
@@ -448,7 +467,7 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 		MTime:    time.Now().UnixNano(),
 		ID:       time.Now().UnixNano(),
 	}
-	return f.db.Create(&o).Error
+	return f.db.WithContext(ctx).Create(&o).Error
 }
 
 // Rmdir deletes the bucket if the fs is at the root
@@ -462,6 +481,7 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) (err error) {
 		dir += "/"
 	}
 	err = f.db.
+		WithContext(ctx).
 		Model(new(Object)).
 		Where(&Object{FS: f, Parent: &dir}).
 		Limit(1).
@@ -474,7 +494,9 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) (err error) {
 		return fs.ErrorDirectoryNotEmpty
 	}
 
-	ret := f.db.Delete(new(Object), &Object{FS: f, Parent: &parent, FileName: name, Mode: os.ModeDir})
+	ret := f.db.
+		WithContext(ctx).
+		Delete(new(Object), &Object{FS: f, Parent: &parent, FileName: name, Mode: os.ModeDir})
 	if ret.Error != nil {
 		return ret.Error
 	}
@@ -512,7 +534,7 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	destObj.ID = time.Now().UnixNano()
 	destObj.Parent = &parent
 	destObj.FileName = name
-	err := f.db.Create(&destObj).Error
+	err := f.db.WithContext(ctx).Create(&destObj).Error
 	return &RegularFile{destObj}, err
 }
 
@@ -658,14 +680,14 @@ func (o *Object) ModTime(ctx context.Context) (result time.Time) {
 // SetModTime sets the modification time of the local fs object
 func (o *Object) SetModTime(ctx context.Context, modTime time.Time) error {
 	o.MTime = modTime.UnixNano()
-	return o.FS.db.Updates(o).Error
+	return o.FS.db.WithContext(ctx).Updates(o).Error
 }
 
 func (o *Object) lazyLoad(ctx context.Context) error {
 	if o.FileSize == 0 || len(o.Contents) > 0 {
 		return nil
 	}
-	return o.FS.db.First(o, o.ID).Error
+	return o.FS.db.WithContext(ctx).First(o, o.ID).Error
 }
 
 // ------------------------------------------------------------
@@ -747,7 +769,7 @@ func (r *RegularFile) Update(ctx context.Context, in io.Reader, src fs.ObjectInf
 	r.FileSize = src.Size()
 	r.SetModTime(ctx, src.ModTime(ctx))
 	r.MIMEType = fs.MimeType(ctx, src)
-	return r.FS.db.Updates(&r.Object).Error
+	return r.FS.db.WithContext(ctx).Updates(&r.Object).Error
 }
 
 // Remove decreases the version reference count by one,
@@ -763,7 +785,7 @@ func (r *RegularFile) Remove(ctx context.Context) (err error) {
 	if err = r.unlink(ctx); err != nil {
 		return err
 	}
-	return r.FS.db.Delete(&r.Object, &r).Error
+	return r.FS.db.WithContext(ctx).Delete(&r.Object, &r).Error
 }
 
 // unlink checks whether the version reference count is no more than one.
