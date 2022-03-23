@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
@@ -80,6 +81,15 @@ reset it at https://packages.aliyun.com/system-settings`,
 			Name: "database",
 			Help: `The DSN of the PostgreSQL metadata database.`,
 		}, {
+			Name: "weak_link",
+			Help: `Enable the weak link directory property.
+
+When a nonexistent file path is visited in a directory with
+the weak link property set, instead of ENOENT, a default symbolic link
+will be generated and returned based on the weak link.  `,
+			Default:  true,
+			Advanced: true,
+		}, {
 			Name:     "max_inline_size",
 			Help:     `Files smaller than this threshold will be saved in the local database.`,
 			Default:  1 * fs.Kibi,
@@ -99,6 +109,7 @@ type Options struct {
 	User     string `config:"user"`
 	Password string `config:"password"`
 	Database string `config:"database"`
+	WeakLink bool   `config:"weak_link"`
 
 	MaxInlineSize fs.SizeSuffix   `config:"max_inline_size"`
 	Hashes        fs.CommaSepList `config:"hashes"`
@@ -218,11 +229,92 @@ func (f *Fs) getObject(ctx context.Context, remote string) (*Object, error) {
 		WithContext(ctx).
 		Find(&o, &Object{FS: f, Parent: &parent, FileName: name})
 	if ret.RowsAffected <= 0 {
-		return nil, fs.ErrorObjectNotFound
+		return f.getWeakLink(ctx, parent, name)
 	}
 
 	o.FS = f
 	return &o, ret.Error
+}
+
+// getWeakLink generates a symbolic link based on the weak link rules
+func (f *Fs) getWeakLink(ctx context.Context, parent, name string) (*Object, error) {
+	if !f.opts.WeakLink || len(parent) == 0 {
+		return nil, fs.ErrorObjectNotFound
+	}
+
+	o := Object{
+		FS:       f,
+		Parent:   new(string),
+		FileName: name,
+		Mode:     os.ModeSymlink,
+	}
+	*o.Parent = parent
+
+	// search for the nearest weak link in the ancestor hierarchy
+	cond := f.db
+	for len(parent) > 0 {
+		parent, name = path.Split(path.Clean(parent))
+		parent := parent
+		cond = cond.Or(&Object{Parent: &parent, FileName: name})
+	}
+
+	var dir Object
+	ret := f.db.
+		WithContext(ctx).
+		Where(&Object{FS: f, Mode: os.ModeDir}).
+		Where(cond).
+		Where("contents is not null").
+		Order("octet_length(parent) desc").
+		Limit(1).
+		Find(&dir)
+	if ret.RowsAffected <= 0 {
+		return nil, fs.ErrorObjectNotFound
+	}
+	if ret.Error != nil {
+		return nil, ret.Error
+	}
+
+	relativeRoot := path.Join(*dir.Parent, dir.FileName)
+	if len(relativeRoot) > 0 {
+		relativeRoot += "/"
+	}
+	relativePath := path.Join(*o.Parent, o.FileName)[len(relativeRoot):]
+
+	rules := string(dir.Contents)
+	targetPath := relativePath
+	if err := f.readWeakLink(rules[:1], rules[1:], &targetPath); err != nil {
+		return nil, err
+	}
+
+	// prevent redirect loop
+	if targetPath == relativePath {
+		return nil, fs.ErrorObjectNotFound
+	}
+	fs.Infof(f, "weak link %s{%s -> %s}", relativeRoot, relativePath, targetPath)
+	o.Contents = []byte(targetPath)
+	return &o, nil
+}
+
+// readWeakLink execute the substitution rules in the weak link property
+func (f *Fs) readWeakLink(delimiter, rules string, targetPath *string) error {
+	for len(rules) > 0 {
+		components := strings.SplitN(rules, delimiter, 3)
+		switch len(components) {
+		case 3:
+			rules = components[2]
+		case 2:
+			rules = ""
+		default:
+			return nil
+		}
+
+		pattern, err := regexp.Compile(components[0])
+		if err != nil {
+			return err
+		}
+		*targetPath = pattern.ReplaceAllString(*targetPath, components[1])
+	}
+	return nil
 }
 
 // NewObject finds the regular file of symbolic link at remote.
