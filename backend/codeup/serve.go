@@ -6,7 +6,9 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 
@@ -154,8 +156,35 @@ func (s *server) serveFile(ctx context.Context, w http.ResponseWriter, r *http.R
 }
 
 func (s *server) serveSymLink(ctx context.Context, w http.ResponseWriter, r *http.Request, o *Object) (err error) {
-	http.Redirect(w, r, string(o.Contents), http.StatusFound)
-	return
+	target := string(o.Contents)
+
+	// client redirect to external scheme://host
+	u, err := url.Parse(target)
+	if err != nil || len(u.Scheme) > 0 || len(u.Host) > 0 {
+		w.Header().Set("Location", target)
+		w.WriteHeader(http.StatusFound)
+		return nil
+	}
+
+	// server internal redirect
+
+	// make relative path absolute by combining with request path
+	if len(u.Path) <= 0 || u.Path[0] != '/' {
+		oldDir, _ := path.Split(r.URL.Path)
+		u.Path = oldDir + u.Path
+	}
+
+	// clean up but preserve trailing slash
+	trailing := strings.HasSuffix(u.Path, "/")
+	u.Path = path.Clean(u.Path)
+	if trailing && !strings.HasSuffix(u.Path, "/") {
+		u.Path += "/"
+	}
+
+	r.URL.Path = u.Path
+	r.URL.RawQuery = u.RawQuery
+	s.handler(w, r)
+	return nil
 }
 
 func (s *server) serveInline(ctx context.Context, w http.ResponseWriter, r *http.Request, o *Object) (err error) {
