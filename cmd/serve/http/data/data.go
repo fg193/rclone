@@ -58,6 +58,14 @@ func AfterEpoch(t time.Time) bool {
 	return t.After(time.Time{})
 }
 
+func humanReadableSize(size int64) string {
+	return fs.SizeSuffix(size).ByteUnit()
+}
+
+func humanReadableTime(t time.Time) string {
+	return t.Format("2006-01-02 15:04:05")
+}
+
 // GetTemplate returns the HTML template for serving directories via HTTP/Webdav
 func GetTemplate(tmpl string) (tpl *template.Template, err error) {
 	var templateString string
@@ -87,6 +95,8 @@ func GetTemplate(tmpl string) (tpl *template.Template, err error) {
 
 	funcMap := template.FuncMap{
 		"afterEpoch": AfterEpoch,
+		"humanSize":  humanReadableSize,
+		"humanTime":  humanReadableTime,
 	}
 	tpl, err = template.New("index").Funcs(funcMap).Parse(templateString)
 	if err != nil {

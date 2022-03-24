@@ -67,7 +67,7 @@ func (x SizeSuffix) string() (string, string) {
 	if math.Floor(scaled) == scaled {
 		return fmt.Sprintf("%.0f", scaled), suffix
 	}
-	return fmt.Sprintf("%.3f", scaled), suffix
+	return fmt.Sprintf("%.1f", scaled), suffix
 }
 
 // String turns SizeSuffix into a string
