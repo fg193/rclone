@@ -212,7 +212,7 @@ func (f *Fs) dbLogLevel(ctx context.Context) logger.LogLevel {
 
 // getObject finds the Object at remote.  If it can't be found
 // it returns the error fs.ErrorObjectNotFound.
-func (f *Fs) getObject(ctx context.Context, remote string) (*Object, error) {
+func (f *Fs) getObject(ctx context.Context, remote string, tryWeakLink bool) (*Object, error) {
 	parent, name := path.Split(path.Join(f.root, remote))
 	name = strings.TrimSuffix(name, fs.LinkSuffix)
 	if len(name) <= 0 {
@@ -227,12 +227,18 @@ func (f *Fs) getObject(ctx context.Context, remote string) (*Object, error) {
 	ret := f.db.
 		WithContext(ctx).
 		Find(&o, &Object{FS: f, Parent: &parent, FileName: name})
+	if ret.Error != nil {
+		return nil, ret.Error
+	}
 	if ret.RowsAffected <= 0 {
-		return f.getWeakLink(ctx, parent, name)
+		if tryWeakLink {
+			return f.getWeakLink(ctx, parent, name)
+		}
+		return nil, fs.ErrorObjectNotFound
 	}
 
 	o.FS = f
-	return &o, ret.Error
+	return &o, nil
 }
 
 // getWeakLink generates a symbolic link based on the weak link rules
@@ -318,7 +324,7 @@ func (f *Fs) readWeakLink(delimiter, rules string, targetPath *string) error {
 
 // NewObject finds the regular file of symbolic link at remote.
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
-	o, err := f.getObject(ctx, remote)
+	o, err := f.getObject(ctx, remote, false)
 	if err != nil {
 		return nil, err
 	}

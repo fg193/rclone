@@ -78,7 +78,7 @@ func (s *server) handler(w http.ResponseWriter, r *http.Request) {
 	reqPathIsDir := strings.HasSuffix(r.URL.Path, "/")
 	remote := strings.Trim(r.URL.Path, "/")
 
-	o, err := s.fs.getObject(ctx, remote)
+	o, err := s.fs.getObject(ctx, remote, true)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if errors.Is(err, fs.ErrorObjectNotFound) {
