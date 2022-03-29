@@ -10,7 +10,6 @@ import (
 	"io/ioutil"
 	"mime/multipart"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"reflect"
@@ -435,7 +434,7 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		FileName: name,
 		FileSize: src.Size(),
 		MTime:    src.ModTime(ctx).UnixNano(),
-		Contents: []byte(url.QueryEscape(fullPath)),
+		Contents: escape(fullPath),
 		ID:       time.Now().UnixNano(),
 	}
 
