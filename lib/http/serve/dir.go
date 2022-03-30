@@ -32,6 +32,7 @@ type Directory struct {
 	Title        string
 	Name         string
 	Entries      []DirEntry
+	Total        int
 	Query        string
 	HTMLTemplate *template.Template
 	Breadcrumb   []Crumb

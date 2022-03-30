@@ -43,6 +43,7 @@ func init() {
 			` + data.Help,
 			Opts: map[string]string{
 				"Template":           "Path to the HTML template for directory indexing",
+				"MaxDirListingSize":  "Do not show more than this count of dir entries",
 				"ListenAddr":         "Port to listen on",
 				"BaseURL":            "Prefix to strip from URLs",
 				"ServerReadTimeout":  "Timeout for server reading data",

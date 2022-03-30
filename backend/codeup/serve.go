@@ -38,9 +38,14 @@ func (f *Fs) serve(ctx context.Context, opts map[string]string) (err error) {
 	if err != nil {
 		return
 	}
+	maxDirListingSize, err := strconv.Atoi(opts["MaxDirListingSize"])
+	if err != nil {
+		maxDirListingSize = -1
+	}
 	s := &server{
-		fs:           f,
-		htmlTemplate: htmlTemplate,
+		fs:                f,
+		htmlTemplate:      htmlTemplate,
+		maxDirListingSize: maxDirListingSize,
 	}
 
 	router, err := httplib.Router()
@@ -54,8 +59,9 @@ func (f *Fs) serve(ctx context.Context, opts map[string]string) (err error) {
 }
 
 type server struct {
-	fs           *Fs
-	htmlTemplate *template.Template
+	fs                *Fs
+	htmlTemplate      *template.Template
+	maxDirListingSize int
 }
 
 func (s *server) Bind(router chi.Router) {
@@ -130,6 +136,11 @@ func (s *server) serveDir(ctx context.Context, w http.ResponseWriter, r *http.Re
 	sortParm := r.URL.Query().Get("sort")
 	orderParm := r.URL.Query().Get("order")
 	directory.ProcessQueryParams(sortParm, orderParm)
+
+	directory.Total = len(directory.Entries)
+	if s.maxDirListingSize >= 0 && directory.Total > s.maxDirListingSize {
+		directory.Entries = directory.Entries[:s.maxDirListingSize]
+	}
 
 	// Set the Last-Modified header to the timestamp
 	w.Header().Set("Last-Modified", dir.ModTime(ctx).UTC().Format(http.TimeFormat))
