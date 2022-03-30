@@ -913,7 +913,7 @@ func (o *Object) refCount(ctx context.Context) (count int64, err error) {
 	err = o.FS.db.
 		WithContext(ctx).
 		Model(o).
-		Where(&Object{FS: o.FS, Hashes: o.Hashes, Version: o.Version}).
+		Where(&Object{FS: o.FS, Hashes: o.Hashes}).
 		Count(&count).
 		Error
 	return
