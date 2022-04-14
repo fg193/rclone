@@ -20,9 +20,10 @@ func sortFileList(fileList []*file) {
 }
 
 type file struct {
+	fs         *Fs
 	Name       string
 	Length     int64
-	ModTime    time.Time
+	modTime    time.Time
 	Mode       int32
 	Uid        int32
 	Gid        int32
@@ -107,13 +108,13 @@ func (rt *recvTransfer) receiveFileEntry(flags uint16, last *file) (*file, error
 	f.Length = length
 
 	if flags&rsync.XMIT_SAME_TIME != 0 {
-		f.ModTime = last.ModTime
+		f.modTime = last.modTime
 	} else {
 		modTime, err := rt.conn.ReadInt32()
 		if err != nil {
 			return nil, err
 		}
-		f.ModTime = time.Unix(int64(modTime), 0)
+		f.modTime = time.Unix(int64(modTime), 0)
 	}
 
 	if flags&rsync.XMIT_SAME_MODE != 0 {

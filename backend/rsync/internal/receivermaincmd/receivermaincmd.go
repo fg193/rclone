@@ -12,10 +12,10 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/google/shlex"
 	"github.com/rclone/rclone/backend/rsync"
 	"github.com/rclone/rclone/backend/rsync/internal/log"
 	"github.com/rclone/rclone/backend/rsync/internal/rsyncwire"
-	"github.com/google/shlex"
 	"golang.org/x/sync/errgroup"
 )
 

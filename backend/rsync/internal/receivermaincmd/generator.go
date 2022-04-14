@@ -54,7 +54,7 @@ func (rt *recvTransfer) skipFile(f *file, st os.FileInfo) (bool, error) {
 
 	// TODO: ignore times
 
-	return modTimeEqual(st.ModTime(), f.ModTime), nil
+	return modTimeEqual(st.ModTime(), f.modTime), nil
 }
 
 func modTimeEqual(a, b time.Time) bool {
@@ -80,8 +80,8 @@ func (rt *recvTransfer) setPerms(f *file) error {
 	mode := f.Mode & rsync.S_IFMT
 	if rt.opts.PreserveTimes &&
 		mode != rsync.S_IFLNK &&
-		!modTimeEqual(st.ModTime(), f.ModTime) {
-		if err := os.Chtimes(local, f.ModTime, f.ModTime); err != nil {
+		!modTimeEqual(st.ModTime(), f.modTime) {
+		if err := os.Chtimes(local, f.modTime, f.modTime); err != nil {
 			return err
 		}
 	}
@@ -106,7 +106,7 @@ func (rt *recvTransfer) recvGenerator(idx int, f *file) error {
 		fmt.Fprintf(rt.env.stdout, "%s %11.0f %s %s\n",
 			f.FileMode().String(),
 			float64(f.Length), // TODO: rsync prints decimal separators
-			f.ModTime.Format("2006/01/02 15:04:05"),
+			f.modTime.Format("2006/01/02 15:04:05"),
 			f.Name)
 		return nil
 	}
