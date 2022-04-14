@@ -3,8 +3,8 @@ package rsyncdconfig_test
 import (
 	"testing"
 
-	"github.com/gokrazy/rsync/internal/rsyncdconfig"
-	"github.com/gokrazy/rsync/rsyncd"
+	"github.com/rclone/rclone/backend/rsync/internal/rsyncdconfig"
+	"github.com/rclone/rclone/backend/rsync/rsyncd"
 	"github.com/google/go-cmp/cmp"
 )
 

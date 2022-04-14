@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gokrazy/rsync/internal/rsynctest"
+	"github.com/rclone/rclone/backend/rsync/internal/rsynctest"
 	"github.com/stapelberg/rsyncparse"
 )
 

@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/gokrazy/rsync/rsyncd"
+	"github.com/rclone/rclone/backend/rsync/rsyncd"
 )
 
 func ExampleNewServer() {

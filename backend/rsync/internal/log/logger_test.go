@@ -6,7 +6,7 @@ import (
 	golog "log"
 	"testing"
 
-	"github.com/gokrazy/rsync/internal/log"
+	"github.com/rclone/rclone/backend/rsync/internal/log"
 )
 
 // make sure we won't panic for calling directly

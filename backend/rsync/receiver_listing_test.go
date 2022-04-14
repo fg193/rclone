@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gokrazy/rsync/internal/receivermaincmd"
-	"github.com/gokrazy/rsync/internal/rsynctest"
+	"github.com/rclone/rclone/backend/rsync/internal/receivermaincmd"
+	"github.com/rclone/rclone/backend/rsync/internal/rsynctest"
 	"github.com/google/go-cmp/cmp"
 )
 

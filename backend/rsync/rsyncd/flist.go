@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gokrazy/rsync"
-	"github.com/gokrazy/rsync/internal/rsyncwire"
+	"github.com/rclone/rclone/backend/rsync"
+	"github.com/rclone/rclone/backend/rsync/internal/rsyncwire"
 )
 
 var (

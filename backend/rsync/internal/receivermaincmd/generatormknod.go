@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/gokrazy/rsync"
+	"github.com/rclone/rclone/backend/rsync"
 	"golang.org/x/sys/unix"
 )
 

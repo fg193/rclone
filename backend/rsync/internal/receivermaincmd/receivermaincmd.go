@@ -12,9 +12,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/gokrazy/rsync"
-	"github.com/gokrazy/rsync/internal/log"
-	"github.com/gokrazy/rsync/internal/rsyncwire"
+	"github.com/rclone/rclone/backend/rsync"
+	"github.com/rclone/rclone/backend/rsync/internal/log"
+	"github.com/rclone/rclone/backend/rsync/internal/rsyncwire"
 	"github.com/google/shlex"
 	"golang.org/x/sync/errgroup"
 )

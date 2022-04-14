@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/gokrazy/rsync/internal/log"
-	"github.com/gokrazy/rsync/rsyncd"
+	"github.com/rclone/rclone/backend/rsync/internal/log"
+	"github.com/rclone/rclone/backend/rsync/rsyncd"
 	"golang.org/x/sys/unix"
 )
 

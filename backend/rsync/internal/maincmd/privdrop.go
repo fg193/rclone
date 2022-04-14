@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"syscall"
 
-	"github.com/gokrazy/rsync/internal/log"
+	"github.com/rclone/rclone/backend/rsync/internal/log"
 )
 
 func dropPrivileges() error {

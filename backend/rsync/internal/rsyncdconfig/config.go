@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
-	"github.com/gokrazy/rsync/rsyncd"
+	"github.com/rclone/rclone/backend/rsync/rsyncd"
 )
 
 type SSHListener struct {

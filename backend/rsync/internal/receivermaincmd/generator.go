@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/gokrazy/rsync"
-	"github.com/gokrazy/rsync/internal/log"
-	"github.com/gokrazy/rsync/internal/rsyncchecksum"
-	"github.com/gokrazy/rsync/internal/rsynccommon"
+	"github.com/rclone/rclone/backend/rsync"
+	"github.com/rclone/rclone/backend/rsync/internal/log"
+	"github.com/rclone/rclone/backend/rsync/internal/rsyncchecksum"
+	"github.com/rclone/rclone/backend/rsync/internal/rsynccommon"
 )
 
 // rsync/generator.c:generate_files()

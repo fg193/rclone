@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gokrazy/rsync/internal/receivermaincmd"
-	"github.com/gokrazy/rsync/internal/rsyncdconfig"
-	"github.com/gokrazy/rsync/internal/rsynctest"
+	"github.com/rclone/rclone/backend/rsync/internal/receivermaincmd"
+	"github.com/rclone/rclone/backend/rsync/internal/rsyncdconfig"
+	"github.com/rclone/rclone/backend/rsync/internal/rsynctest"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/renameio/v2"
 )

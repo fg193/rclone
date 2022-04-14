@@ -16,11 +16,11 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/gokrazy/rsync/internal/anonssh"
-	"github.com/gokrazy/rsync/internal/log"
-	"github.com/gokrazy/rsync/internal/maincmd"
-	"github.com/gokrazy/rsync/internal/rsyncdconfig"
-	"github.com/gokrazy/rsync/rsyncd"
+	"github.com/rclone/rclone/backend/rsync/internal/anonssh"
+	"github.com/rclone/rclone/backend/rsync/internal/log"
+	"github.com/rclone/rclone/backend/rsync/internal/maincmd"
+	"github.com/rclone/rclone/backend/rsync/internal/rsyncdconfig"
+	"github.com/rclone/rclone/backend/rsync/rsyncd"
 	"github.com/google/go-cmp/cmp"
 	"golang.org/x/sys/unix"
 )

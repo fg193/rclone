@@ -8,6 +8,8 @@ require (
 	github.com/Azure/azure-storage-blob-go v0.14.0
 	github.com/Azure/go-autorest/autorest/adal v0.9.18
 	github.com/Azure/go-ntlmssp v0.0.0-20211209120228-48547f28849e
+	github.com/BurntSushi/toml v0.3.1
+	github.com/DavidGamba/go-getoptions v0.25.3
 	github.com/Max-Sum/base32768 v0.0.0-20191205131208-7937843c71d5
 	github.com/Unknwon/goconfig v1.0.0
 	github.com/a8m/tree v0.0.0-20210414114729-ce3525c5c2ef
@@ -17,7 +19,6 @@ require (
 	github.com/artyom/mtab v1.0.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/aws/aws-sdk-go v1.43.30
-	github.com/winfsp/cgofuse v1.5.0
 	github.com/buengese/sgzip v0.1.1
 	github.com/colinmarc/hdfs/v2 v2.3.0
 	github.com/coreos/go-semver v0.3.0
@@ -26,7 +27,7 @@ require (
 	github.com/dropbox/dropbox-sdk-go-unofficial/v6 v6.0.4
 	github.com/gabriel-vasile/mimetype v1.4.0
 	github.com/go-chi/chi/v5 v5.0.7
-	github.com/google/go-cmp v0.5.6
+	github.com/google/go-cmp v0.5.7
 	github.com/google/renameio/v2 v2.0.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.3.0
@@ -58,6 +59,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.1
 	github.com/t3rm1n4l/go-mega v0.0.0-20200416171014-ffad7fcb44b8
+	github.com/winfsp/cgofuse v1.5.0
 	github.com/xanzy/ssh-agent v0.3.1
 	github.com/youmark/pkcs8 v0.0.0-20201027041543-1326539a0a0a
 	github.com/yunify/qingstor-sdk-go/v3 v3.2.0

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gokrazy/rsync/internal/rsyncdconfig"
-	"github.com/gokrazy/rsync/internal/rsynctest"
+	"github.com/rclone/rclone/backend/rsync/internal/rsyncdconfig"
+	"github.com/rclone/rclone/backend/rsync/internal/rsynctest"
 )
 
 type connWithRemoteAddrListener struct {

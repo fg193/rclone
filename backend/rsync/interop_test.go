@@ -13,10 +13,10 @@ import (
 	"testing"
 
 	"github.com/BurntSushi/toml"
-	"github.com/gokrazy/rsync/internal/maincmd"
-	"github.com/gokrazy/rsync/internal/rsyncdconfig"
-	"github.com/gokrazy/rsync/internal/rsynctest"
-	"github.com/gokrazy/rsync/rsyncd"
+	"github.com/rclone/rclone/backend/rsync/internal/maincmd"
+	"github.com/rclone/rclone/backend/rsync/internal/rsyncdconfig"
+	"github.com/rclone/rclone/backend/rsync/internal/rsynctest"
+	"github.com/rclone/rclone/backend/rsync/rsyncd"
 	"github.com/google/go-cmp/cmp"
 )
 

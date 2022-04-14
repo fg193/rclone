@@ -5,7 +5,7 @@ package rsynccommon
 import (
 	"math"
 
-	"github.com/gokrazy/rsync"
+	"github.com/rclone/rclone/backend/rsync"
 )
 
 const blockSize = 700 // rsync/rsync.h

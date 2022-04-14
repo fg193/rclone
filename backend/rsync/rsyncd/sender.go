@@ -6,9 +6,9 @@ import (
 	"os"
 	"sort"
 
-	"github.com/gokrazy/rsync"
-	"github.com/gokrazy/rsync/internal/rsyncchecksum"
-	"github.com/gokrazy/rsync/internal/rsynccommon"
+	"github.com/rclone/rclone/backend/rsync"
+	"github.com/rclone/rclone/backend/rsync/internal/rsyncchecksum"
+	"github.com/rclone/rclone/backend/rsync/internal/rsynccommon"
 	"github.com/mmcloughlin/md4"
 	"golang.org/x/sync/errgroup"
 )

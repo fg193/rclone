@@ -7,8 +7,8 @@ import (
 	"hash"
 	"os"
 
-	"github.com/gokrazy/rsync"
-	"github.com/gokrazy/rsync/internal/rsyncchecksum"
+	"github.com/rclone/rclone/backend/rsync"
+	"github.com/rclone/rclone/backend/rsync/internal/rsyncchecksum"
 	"github.com/mmcloughlin/md4"
 )
 
