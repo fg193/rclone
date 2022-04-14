@@ -26,6 +26,9 @@ require (
 	github.com/dropbox/dropbox-sdk-go-unofficial/v6 v6.0.4
 	github.com/gabriel-vasile/mimetype v1.4.0
 	github.com/go-chi/chi/v5 v5.0.7
+	github.com/google/go-cmp v0.5.6
+	github.com/google/renameio/v2 v2.0.0
+	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.3.0
 	github.com/hanwen/go-fuse/v2 v2.1.0
 	github.com/iguanesolutions/go-systemd/v5 v5.1.0
@@ -37,6 +40,7 @@ require (
 	github.com/mattn/go-colorable v0.1.12
 	github.com/mattn/go-runewidth v0.0.13
 	github.com/mitchellh/go-homedir v1.1.0
+	github.com/mmcloughlin/md4 v0.1.1
 	github.com/ncw/go-acd v0.0.0-20201019170801-fe55f33415b1
 	github.com/ncw/swift/v2 v2.0.1
 	github.com/nsf/termbox-go v1.1.1
