@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/rclone/rclone/backend/rsync"
-	"github.com/rclone/rclone/backend/rsync/internal/log"
+	rclone "github.com/rclone/rclone/fs"
 )
 
 // rsync/flist.c:flist_sort_and_clean
@@ -206,13 +206,13 @@ func (rt *recvTransfer) receiveFileList() ([]*file, error) {
 		}
 		lastFileEntry = f
 		// TODO: include depth in output?
-		log.Printf("[Receiver] i=%d ? %s mode=%o len=%d uid=%d gid=%d flags=?",
+		rclone.Debugf(f, "i=%d mode=%o len=%d uid=%d gid=%d flags=%#02x",
 			len(fileList),
-			f.Name,
 			f.Mode,
 			f.Length,
 			f.Uid,
-			f.Gid)
+			f.Gid,
+			flags)
 		fileList = append(fileList, f)
 	}
 	return fileList, nil

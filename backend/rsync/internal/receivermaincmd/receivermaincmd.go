@@ -299,8 +299,7 @@ func doCmd(opts *Opts, machine, user, path string, daemonConnection int) (io.Rea
 	return rc, wc, nil
 }
 
-// rsync/main.c:client_run
-func clientRun(osenv osenv, opts *Opts, conn io.ReadWriter, dest string, negotiate bool) (*Stats, error) {
+func newRecvTransfer(osenv osenv, opts *Opts, conn io.ReadWriter, dest string, negotiate bool) (*recvTransfer, error) {
 	c := &rsyncwire.Conn{
 		Reader: conn,
 		Writer: conn,
@@ -345,7 +344,15 @@ func clientRun(osenv osenv, opts *Opts, conn io.ReadWriter, dest string, negotia
 	}
 
 	log.Printf("exclusion list sent")
+	return rt, nil
+}
 
+// rsync/main.c:client_run
+func clientRun(osenv osenv, opts *Opts, conn io.ReadWriter, dest string, negotiate bool) (*Stats, error) {
+	rt, err := newRecvTransfer(osenv, opts, conn, dest, negotiate)
+	if err != nil {
+		return nil, err
+	}
 	// receive file list
 	log.Printf("receiving file list")
 	fileList, err := rt.receiveFileList()
@@ -356,6 +363,14 @@ func clientRun(osenv osenv, opts *Opts, conn io.ReadWriter, dest string, negotia
 
 	sortFileList(fileList)
 
+	if _, err = rt.recvUserGroups(); err != nil {
+		return nil, err
+	}
+
+	return rt.asyncGenRecvFiles(fileList)
+}
+
+func (rt *recvTransfer) recvUserGroups() (map[int32]mapping, error) {
 	// receive the uid/gid list
 	users, groups, err := rt.recvIdList()
 	if err != nil {
@@ -365,12 +380,16 @@ func clientRun(osenv osenv, opts *Opts, conn io.ReadWriter, dest string, negotia
 	_ = groups
 
 	// read the i/o error flag
+	c := rt.conn
 	ioErrors, err := c.ReadInt32()
 	if err != nil {
 		return nil, err
 	}
 	log.Printf("ioErrors: %v", ioErrors)
+	return users, nil
+}
 
+func (rt *recvTransfer) asyncGenRecvFiles(fileList []*file) (*Stats, error) {
 	ctx := context.Background()
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
@@ -396,6 +415,7 @@ func clientRun(osenv osenv, opts *Opts, conn io.ReadWriter, dest string, negotia
 
 	// read statistics:
 	// total bytes read (from network connection)
+	c := rt.conn
 	read, err := c.ReadInt64()
 	if err != nil {
 		return nil, err

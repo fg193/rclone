@@ -10,7 +10,9 @@ type Opts struct {
 		ModuleMap        string
 	}
 
-	Archive           bool
+	URL string `config:"url"`
+
+	Archive           bool `config:"archive"`
 	Update            bool
 	PreserveHardlinks bool
 

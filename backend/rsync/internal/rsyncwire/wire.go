@@ -78,6 +78,7 @@ func (w *MultiplexReader) Read(p []byte) (n int, err error) {
 	}
 	if tag == MsgInfo {
 		log.Printf("info: %s", payload)
+		return 0, nil
 	}
 	if tag != MsgData {
 		return 0, fmt.Errorf("unexpected tag: got %v, want %v", tag, MsgData)
