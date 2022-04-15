@@ -17,10 +17,15 @@ func sortFileList(fileList []*file) {
 	sort.Slice(fileList, func(i, j int) bool {
 		return fileList[i].Name < fileList[j].Name
 	})
+
+	for index, file := range fileList {
+		file.index = index
+	}
 }
 
 type file struct {
 	fs         *Fs
+	index      int
 	Name       string
 	Length     int64
 	modTime    time.Time
@@ -186,6 +191,8 @@ func (rt *recvTransfer) receiveFileEntry(flags uint16, last *file) (*file, error
 
 // rsync/flist.c:recv_file_list
 func (rt *recvTransfer) receiveFileList() ([]*file, error) {
+	rclone.Debugf(nil, "receiving file list")
+
 	var lastFileEntry *file
 	var fileList []*file
 	for {
@@ -215,5 +222,8 @@ func (rt *recvTransfer) receiveFileList() ([]*file, error) {
 			flags)
 		fileList = append(fileList, f)
 	}
+
+	rclone.Debugf(nil, "sorting %d names", len(fileList))
+	sortFileList(fileList)
 	return fileList, nil
 }

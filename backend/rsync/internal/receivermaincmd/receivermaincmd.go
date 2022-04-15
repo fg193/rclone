@@ -353,15 +353,12 @@ func clientRun(osenv osenv, opts *Opts, conn io.ReadWriter, dest string, negotia
 	if err != nil {
 		return nil, err
 	}
+
 	// receive file list
-	log.Printf("receiving file list")
 	fileList, err := rt.receiveFileList()
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("received %d names", len(fileList))
-
-	sortFileList(fileList)
 
 	if _, err = rt.recvUserGroups(); err != nil {
 		return nil, err
