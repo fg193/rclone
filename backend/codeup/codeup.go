@@ -81,12 +81,27 @@ reset it at https://packages.aliyun.com/system-settings`,
 			Name: "database",
 			Help: `The DSN of the PostgreSQL metadata database.`,
 		}, {
+			Name: "upload_path_mapping",
+			Help: `\
+This rule maps the actual full path of a file to the path used for uploads.
+
+The syntax somewhat looks like the s(ubstitute) command of sed.
+The first character of the rule will be used as the delimiter.
+The rest part of the rule should be pairs of regular expression
+search patterns and replacements, delimited by the first character,
+both between the pattern-repl in the same pair and between pairs.`,
+			Advanced: true,
+		}, {
 			Name: "weak_link",
 			Help: `Enable the weak link directory property.
 
 When a nonexistent file path is visited in a directory with
 the weak link property set, instead of ENOENT, a default symbolic link
-will be generated and returned based on the weak link.  `,
+will be generated and returned based on the weak link.
+
+The syntax of the weak link property for a directory is the same as
+the path mapping rule.  The full path of the symbolic link itself
+is used as the mapping input, and link target as the mapping output.`,
 			Default:  true,
 			Advanced: true,
 		}, {
@@ -111,6 +126,7 @@ type Options struct {
 	Database string `config:"database"`
 	WeakLink bool   `config:"weak_link"`
 
+	UploadMapping string          `config:"upload_path_mapping"`
 	MaxInlineSize fs.SizeSuffix   `config:"max_inline_size"`
 	Hashes        fs.CommaSepList `config:"hashes"`
 }
@@ -288,7 +304,7 @@ func (f *Fs) getWeakLink(ctx context.Context, parent, name string) (*Object, err
 
 	rules := string(dir.Contents)
 	targetPath := relativePath
-	if err := f.readWeakLink(rules[:1], rules[1:], &targetPath); err != nil {
+	if err := f.pathMapping(rules[:1], rules[1:], &targetPath); err != nil {
 		return nil, err
 	}
 
@@ -301,8 +317,8 @@ func (f *Fs) getWeakLink(ctx context.Context, parent, name string) (*Object, err
 	return &o, nil
 }
 
-// readWeakLink execute the substitution rules in the weak link property
-func (f *Fs) readWeakLink(delimiter, rules string, targetPath *string) error {
+// pathMapping execute the substitution rules
+func (f *Fs) pathMapping(delimiter, rules string, targetPath *string) error {
 	for len(rules) > 0 {
 		components := strings.SplitN(rules, delimiter, 3)
 		switch len(components) {
@@ -441,7 +457,6 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		FileName: name,
 		FileSize: src.Size(),
 		MTime:    src.ModTime(ctx).UnixNano(),
-		Contents: escape(fullPath),
 		ID:       time.Now().UnixNano(),
 	}
 
@@ -461,9 +476,19 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		o.Hashes.Set(ht, digest)
 	}
 
+	uploadParent, uploadName := parent, name
+	if len(f.opts.UploadMapping) > 1 {
+		err = f.pathMapping(f.opts.UploadMapping[:1], f.opts.UploadMapping[1:], &fullPath)
+		if err != nil {
+			return
+		}
+		uploadParent, uploadName = path.Split(fullPath)
+	}
+
+	o.Contents = escape(fullPath)
 	o.Version = time.Now().UnixNano()
 	params := NewVersionParams(o.Version)
-	params.Set("fileName", o.FileName)
+	params.Set("fileName", uploadName)
 	params.Set("downloadFileName", o.FileName)
 
 	pipeReader, pipeWriter := io.Pipe()
@@ -472,7 +497,7 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		resp CreateVersionResponse
 		opts = rest.Opts{
 			Method:      http.MethodPost,
-			Path:        parent,
+			Path:        uploadParent,
 			Parameters:  params,
 			ContentType: multiPartWriter.FormDataContentType(),
 			Body:        pipeReader,
