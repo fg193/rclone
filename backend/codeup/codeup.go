@@ -232,9 +232,9 @@ func (f *Fs) dbLogLevel(ctx context.Context) logger.LogLevel {
 func (f *Fs) getObject(ctx context.Context, remote string, tryWeakLink bool) (*Object, error) {
 	parent, name := path.Split(path.Join(f.root, remote))
 	name = strings.TrimSuffix(name, fs.LinkSuffix)
-	if len(name) <= 0 {
+	if len(name) == 0 {
 		// root directory special case
-		if len(parent) <= 0 {
+		if len(parent) == 0 {
 			return &Object{FS: f, Parent: &parent, Mode: os.ModeDir}, nil
 		}
 		return nil, fs.ErrorNotAFile
@@ -247,15 +247,14 @@ func (f *Fs) getObject(ctx context.Context, remote string, tryWeakLink bool) (*O
 	if ret.Error != nil {
 		return nil, ret.Error
 	}
-	if ret.RowsAffected <= 0 {
-		if tryWeakLink {
-			return f.getWeakLink(ctx, parent, name)
-		}
-		return nil, fs.ErrorObjectNotFound
+	if ret.RowsAffected != 0 {
+		o.FS = f
+		return &o, nil
 	}
-
-	o.FS = f
-	return &o, nil
+	if tryWeakLink {
+		return f.getWeakLink(ctx, parent, name)
+	}
+	return nil, fs.ErrorObjectNotFound
 }
 
 // getWeakLink generates a symbolic link based on the weak link rules
@@ -266,38 +265,42 @@ func (f *Fs) getWeakLink(ctx context.Context, parent, name string) (*Object, err
 
 	o := Object{
 		FS:       f,
-		Parent:   new(string),
+		Parent:   &parent,
 		FileName: name,
 		Mode:     os.ModeSymlink,
 	}
-	*o.Parent = parent
 
 	// search for the nearest weak link in the ancestor hierarchy
 	cond := f.db
-	for len(parent) > 0 {
-		parent, name = path.Split(path.Clean(parent))
-		parent := parent
-		cond = cond.Or(&Object{Parent: &parent, FileName: name})
+	dirs := o.listParents()
+	if len(dirs) == 0 {
+		// cond will be empty
+		// to avoid all dirs in the fs being fetched, exit now
+		return nil, fs.ErrorObjectNotFound
+	}
+	for _, dir := range dirs {
+		cond = cond.Or(dir)
 	}
 
 	var dir Object
 	ret := f.db.
 		WithContext(ctx).
+		Select("contents").
 		Where(&Object{FS: f, Mode: os.ModeDir}).
 		Where(cond).
 		Where("contents is not null").
 		Order("octet_length(parent) desc").
 		Limit(1).
 		Find(&dir)
-	if ret.RowsAffected <= 0 {
-		return nil, fs.ErrorObjectNotFound
-	}
 	if ret.Error != nil {
 		return nil, ret.Error
 	}
+	if ret.RowsAffected == 0 {
+		return nil, fs.ErrorObjectNotFound
+	}
 
 	relativeRoot := path.Join(*dir.Parent, dir.FileName)
-	if len(relativeRoot) > 0 {
+	if len(relativeRoot) != 0 {
 		relativeRoot += "/"
 	}
 	relativePath := path.Join(*o.Parent, o.FileName)[len(relativeRoot):]
@@ -460,6 +463,9 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 		ID:       time.Now().UnixNano(),
 	}
 
+	if err = o.makeParents(ctx); err != nil {
+		return
+	}
 	if strings.HasSuffix(name, fs.LinkSuffix) {
 		o.Mode = os.ModeSymlink
 		o.FileName = o.FileName[:len(o.FileName)-len(fs.LinkSuffix)]
@@ -773,7 +779,9 @@ func (o *Object) Remote() string {
 }
 
 func (o *Object) remote(fileName string) string {
-	return strings.TrimPrefix(path.Join(*o.Parent, fileName), o.FS.root)
+	return strings.TrimPrefix(strings.TrimPrefix(
+		path.Join(*o.Parent, fileName),
+		strings.TrimSuffix(o.FS.root, "/")), "/")
 }
 
 // Hash returns the hash of an object returning a lowercase hex string
@@ -806,11 +814,83 @@ func (o *Object) SetModTime(ctx context.Context, modTime time.Time) error {
 	return o.FS.db.WithContext(ctx).Updates(o).Error
 }
 
+// lazyLoad fetches the columns that are excluded from the objectListColumns.
 func (o *Object) lazyLoad(ctx context.Context) error {
 	if o.FileSize == 0 || len(o.Contents) > 0 {
 		return nil
 	}
 	return o.FS.db.WithContext(ctx).First(o, o.ID).Error
+}
+
+// listParents parses parent path string to generate all the directories
+// in the ancestor tree.  Does not confirm their existence in the database.
+func (o *Object) listParents() (dirs []*Object) {
+	parent, name := *o.Parent, o.FileName
+	for len(parent) > 0 {
+		parent, name = path.Split(path.Clean(parent))
+		parent := parent
+		dirs = append(dirs, &Object{Parent: &parent, FileName: name})
+	}
+	return dirs
+}
+
+// makeParents assures the existence of all directories in the ancestor tree.
+// equivalent shell script: mkdir -p $(dirname $o)
+func (o *Object) makeParents(ctx context.Context) (err error) {
+	var (
+		allDirs   = o.listParents()
+		existDirs []string
+		cond      = o.FS.db
+	)
+	if len(allDirs) == 0 {
+		// cond will be empty
+		// to avoid all dirs in the fs being fetched, exit now
+		return
+	}
+	for _, dir := range allDirs {
+		cond = cond.Or(dir)
+	}
+	err = o.FS.db.
+		WithContext(ctx).
+		Model(o).
+		Where(&Object{FS: o.FS, Mode: os.ModeDir}).
+		Where(cond).
+		Order("octet_length(parent) desc").
+		Pluck("parent", &existDirs).
+		Error
+	if err != nil {
+		return
+	}
+
+	if len(allDirs) == len(existDirs) {
+		return
+	}
+	now := time.Now().UnixNano()
+
+	// filter the allDirs slice in-place.
+	// check from the end to the beginning, and leave the newDirs at the end
+	// len(existDirs) + len(newDirs) = len(allDirs)
+	var e, n, a int // slice beginning pointers
+	for e, n, a = len(existDirs)-1, len(allDirs)-1, len(allDirs)-1; a >= 0; a-- {
+		// if allDirs[a] exists, moves pointer e
+		if e >= 0 && existDirs[e] == *allDirs[a].Parent {
+			e--
+			continue
+		}
+
+		// otherwise moves pointer n
+		dir := allDirs[a]
+		dir.ID = now + int64(n)
+		dir.FS = o.FS
+		dir.Mode = os.ModeDir
+		dir.MTime = now
+		allDirs[n] = dir // probably a no-op
+		n--
+	}
+
+	allDirs = allDirs[n+1:]
+	fs.Infof(o, "makeParents %+v", allDirs)
+	return o.FS.db.WithContext(ctx).Create(&allDirs).Error
 }
 
 // ------------------------------------------------------------
