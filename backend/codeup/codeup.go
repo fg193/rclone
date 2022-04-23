@@ -52,6 +52,12 @@ func init() {
 				"SslKey":             "Path to SSL PEM Private key",
 				"ClientCA":           "Client certificate authority to verify clients with",
 			},
+		}, {
+			Name:  "mapping",
+			Short: "Test the upload path mapping rule",
+			Long: `Usage Examples:
+
+	rclone backend mapping remote:my/original/path/of/file.ext`,
 		}},
 		Options: []fs.Option{{
 			Name: "org",
@@ -80,6 +86,12 @@ reset it at https://packages.aliyun.com/system-settings`,
 		}, {
 			Name: "database",
 			Help: `The DSN of the PostgreSQL metadata database.`,
+		}, {
+			Name: "auto_migrate",
+			Help: `\
+Check the database schema and run automatic migration during initialization.`,
+			Default:  false,
+			Advanced: true,
 		}, {
 			Name: "upload_path_mapping",
 			Help: `\
@@ -126,6 +138,7 @@ type Options struct {
 	Database string `config:"database"`
 	WeakLink bool   `config:"weak_link"`
 
+	AutoMigrate   bool            `config:"auto_migrate"`
 	UploadMapping string          `config:"upload_path_mapping"`
 	MaxInlineSize fs.SizeSuffix   `config:"max_inline_size"`
 	Hashes        fs.CommaSepList `config:"hashes"`
@@ -206,10 +219,10 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	}); err != nil {
 		return nil, err
 	}
-	if err = f.db.AutoMigrate(new(Object)); err != nil {
-		return nil, err
+	if f.opts.AutoMigrate {
+		err = f.db.AutoMigrate(new(Object))
 	}
-	return f, nil
+	return f, err
 }
 
 // dbLogLevel maps rclone global log levels to database log levels
@@ -725,6 +738,15 @@ func (f *Fs) Command(ctx context.Context, name string, args []string, opts map[s
 	switch name {
 	case "serve":
 		return nil, f.serve(ctx, opts)
+	case "mapping":
+		if len(f.opts.UploadMapping) <= 1 {
+			return nil, nil
+		}
+		err = f.pathMapping(f.opts.UploadMapping[:1], f.opts.UploadMapping[1:], &f.root)
+		if err != nil {
+			return
+		}
+		return f.root, nil
 	default:
 		return nil, fs.ErrorCommandNotFound
 	}
