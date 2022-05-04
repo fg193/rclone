@@ -97,7 +97,7 @@ func (s *server) handler(w http.ResponseWriter, r *http.Request) {
 
 	// the slash suffix is required for correct relative links
 	if !reqPathIsDir && o.Mode.IsDir() {
-		http.Redirect(w, r, remote+"/", http.StatusMovedPermanently)
+		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
 		return
 	}
 
