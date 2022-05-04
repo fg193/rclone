@@ -577,11 +577,18 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 }
 
 func (f *Fs) putInline(ctx context.Context, o *Object, in io.Reader) (_ fs.Object, err error) {
-	contents, err := ioutil.ReadAll(in)
-	if err != nil {
-		return
+	buf := new(bytes.Buffer)
+	if o.FileSize > 0 {
+		buf.Grow(int(o.FileSize))
 	}
-	o.Contents = contents
+	hashes, err := hash.StreamTypes(io.TeeReader(in, buf), f.Hashes())
+	if err != nil {
+		return nil, err
+	}
+	for hashType, hashDigest := range hashes {
+		o.Hashes.Set(hashType, hashDigest)
+	}
+	o.Contents = buf.Bytes()
 
 	r := &RegularFile{*o}
 	prevObj, err := f.NewObject(ctx, o.Remote())
@@ -810,6 +817,11 @@ func (o *Object) remote(fileName string) string {
 func (o *Object) Hash(ctx context.Context, ht hash.Type) (digest string, err error) {
 	if !o.FS.hashSet.Contains(ht) {
 		return digest, hash.ErrUnsupported
+	}
+	if len(o.Hashes.MD5) == 0 {
+		if err = o.lazyLoad(ctx); err != nil {
+			return
+		}
 	}
 	digest = o.Hashes.Get(ht)
 	return
