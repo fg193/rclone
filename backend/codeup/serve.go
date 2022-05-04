@@ -150,7 +150,7 @@ func (s *server) serveDir(ctx context.Context, w http.ResponseWriter, r *http.Re
 }
 
 func (s *server) serveFile(ctx context.Context, w http.ResponseWriter, r *http.Request, o *Object) (err error) {
-	w.Header().Set("Last-Modified", o.ModTime(ctx).UTC().Format(http.TimeFormat))
+	s.serveHeader(ctx, w, o)
 
 	// If HEAD no need to read the object since we have set the headers
 	if r.Method == "HEAD" {
@@ -167,6 +167,7 @@ func (s *server) serveFile(ctx context.Context, w http.ResponseWriter, r *http.R
 }
 
 func (s *server) serveSymLink(ctx context.Context, w http.ResponseWriter, r *http.Request, o *Object) (err error) {
+	s.serveHeader(ctx, w, o)
 	target := string(o.Contents)
 
 	// client redirect to external scheme://host
@@ -199,16 +200,36 @@ func (s *server) serveSymLink(ctx context.Context, w http.ResponseWriter, r *htt
 }
 
 func (s *server) serveInline(ctx context.Context, w http.ResponseWriter, r *http.Request, o *Object) (err error) {
+	s.serveHeader(ctx, w, o)
 	w.Header().Set("Content-Length", strconv.Itoa(len(o.Contents)))
-	w.Header().Set("Last-Modified", o.ModTime(ctx).UTC().Format(http.TimeFormat))
 
 	if r.Method == "HEAD" {
 		return
 	}
 
-	if err = o.lazyLoad(ctx); err != nil {
-		return
-	}
 	_, err = w.Write(o.Contents)
 	return
+}
+
+func (s *server) serveHeader(ctx context.Context, w http.ResponseWriter, o *Object) {
+	w.Header().Set("Last-Modified", o.ModTime(ctx).UTC().Format(http.TimeFormat))
+
+	digestList := new(strings.Builder)
+	for _, hashType := range o.Fs().Hashes().Array() {
+		digest := o.Hashes.Get(hashType)
+		if len(digest) == 0 {
+			continue
+		}
+
+		digestList.WriteByte(',')
+		digestList.WriteString(hashType.String())
+		digestList.WriteByte('=')
+		digestList.WriteString(digest)
+	}
+	if digestList.Len() > 0 {
+		w.Header().Set("Digest", digestList.String()[1:])
+	}
+	if len(o.Hashes.MD5) > 0 {
+		w.Header().Set("ETag", o.Hashes.MD5)
+	}
 }
