@@ -298,7 +298,6 @@ func (f *Fs) getWeakLink(ctx context.Context, parent, name string) (*Object, err
 	var dir Object
 	ret := f.db.
 		WithContext(ctx).
-		Select("contents").
 		Where(&Object{FS: f, Mode: os.ModeDir}).
 		Where(cond).
 		Where("contents is not null").
